@@ -1,0 +1,42 @@
+{
+    "shartnoma_raqami": "2025/01-123",
+    "sana": {
+        "kun": "01",
+        "oy": "Январ",
+        "yil": "2025"
+    },
+   "student": {
+    "student_fio": "Юсупов Абдулборий Баҳодирович",
+     "student_image": "Bunyodkor-new.png",
+    "birth_year": "2012",
+    "student_address": "Тошкент ш. Чилонзор т. Лутфий кўчаси 61-уй",
+    "dad_occupation": "Тадбиркор",
+    "mom_occupation": "Уй бекаси",
+    "dad_phone_number": "(33) 135-80-09",
+    "mom_phone_number": "(78) 162-16-14",
+    "momordad_fio": "Бахриддинова Гулова Баҳромовна"
+  },
+    "buyurtmachi": {
+        "fio": " Каримович Ахмедов  Каримович",
+        "pasport_seriya": "AA 1234567",
+        "pasport_kim_bergan": "Чилонзор тумани ИИБ",
+        "pasport_qachon_bergan": "01.01.2024",
+        "manzil": "Тошкент ш, Чилонзор тумани, 1-даха, 12-уй, 34-хонадон",
+        "telefon": "+998 90 123 45 67"
+    },
+    "tarbiyalanuvchi": {
+        "fio": "Ахмедов Шоҳруҳ Дилшодович",
+        "tugilganlik_guvohnoma": "I-AA 1234567",
+        "guvohnoma_kim_bergan": "Чилонзор тумани ФХДЁ бўлими илонзор тумани",
+        "guvohnoma_qachon_bergan": "01.01.2016"
+    },
+    "shartnoma_muddati": {
+        "boshlanish": "«01» Январ",
+        "tugash": "31",
+         "yil": 2030
+    },
+    "tolov": {
+        "oylik_narx": "600 000",
+        "oylik_narx_sozlar": "олти юз минг"
+    }
+}
