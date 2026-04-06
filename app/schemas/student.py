@@ -1,6 +1,6 @@
 from datetime import datetime, date
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.models.enums import StudentStatus
 
 
@@ -9,6 +9,9 @@ class StudentRead(BaseModel):
     first_name: str
     last_name: str
     date_of_birth: date
+    height: int
+    weight: int
+    pnfl: str = Field(min_length=14, max_length=14)
     phone: Optional[str] = None
     address: Optional[str] = None
     photo_url: Optional[str] = None
@@ -25,6 +28,9 @@ class StudentCreate(BaseModel):
     first_name: str
     last_name: str
     date_of_birth: date
+    height: int
+    weight: int
+    pnfl: str = Field(min_length=14, max_length=14)
     phone: Optional[str] = None
     address: Optional[str] = None
     photo_url: Optional[str] = None
@@ -37,6 +43,9 @@ class StudentUpdate(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     date_of_birth: Optional[date] = None
+    height: Optional[int] = None
+    weight: Optional[int] = None
+    pnfl: Optional[str] = Field(default=None, min_length=14, max_length=14)
     phone: Optional[str] = None
     address: Optional[str] = None
     photo_url: Optional[str] = None
@@ -76,20 +85,8 @@ class ParentUpdate(BaseModel):
     relationship_type: Optional[str] = None
 
 
-class StudentDebtInfo(BaseModel):
-    student: StudentRead
-    total_expected: float
-    total_paid: float
-    debt_amount: float
-    active_contracts_count: int
-
-    class Config:
-        from_attributes = True
-
-
 # Import related schemas at the end to avoid circular imports
 from app.schemas.contract import ContractRead
-from app.schemas.transaction import TransactionRead
 from app.schemas.attendance import AttendanceRead
 from app.schemas.group import GroupRead
 from app.schemas.auth import UserRead
@@ -102,7 +99,5 @@ class StudentFullInfo(BaseModel):
     contracts: list[ContractRead]
     group: Optional[GroupRead] = None
     coach: Optional[UserRead] = None
-    transactions: list[TransactionRead]
     attendances: list[AttendanceRead]
-    total_payments: float = 0.0  # Total of all successful payments
     active_contracts_count: int = 0  # Number of active contracts

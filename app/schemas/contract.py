@@ -1,7 +1,7 @@
 from datetime import datetime, date
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
-from app.models.enums import ContractStatus, PaymentSource
+from app.models.enums import ContractStatus
 
 
 class TerminatedByUser(BaseModel):
@@ -246,15 +246,6 @@ class ContractReadWithStudentName(BaseModel):
         from_attributes = True
 
 
-class TerminatedPaymentInfo(BaseModel):
-    transaction_id: int
-    amount: float
-    source: PaymentSource
-    paid_at: Optional[datetime] = None
-    payment_year: Optional[int] = None
-    payment_months: Optional[List[int]] = None
-
-
 class TerminatedStudentRead(BaseModel):
     contract_id: int
     contract_number: str
@@ -267,6 +258,9 @@ class TerminatedStudentRead(BaseModel):
     student_id: int
     student_first_name: str
     student_last_name: str
+    student_height: int
+    student_weight: int
+    student_pnfl: str
     student_phone: Optional[str] = None
     student_group_id: Optional[int] = None
     student_group_name: Optional[str] = None
@@ -276,42 +270,3 @@ class TerminatedStudentRead(BaseModel):
     termination_reason: Optional[str] = None
     terminated_by_user_id: Optional[int] = None
     terminated_by_full_name: Optional[str] = None
-
-    successful_payments_count: int = 0
-    successful_payments_total: float = 0.0
-    successful_payments: List[TerminatedPaymentInfo] = Field(default_factory=list)
-
-
-class TerminatedUnpaidReportRow(BaseModel):
-    contract_id: int
-    contract_number: str
-    original_contract_number: Optional[str] = None
-
-    student_id: int
-    student_first_name: str
-    student_last_name: str
-    student_phone: Optional[str] = None
-
-    contract_group_id: Optional[int] = None
-    contract_group_name: Optional[str] = None
-    contract_group_identifier: Optional[str] = None
-    current_student_group_id: Optional[int] = None
-    current_student_group_name: Optional[str] = None
-
-    contract_start_date: date
-    contract_end_date: date
-    terminated_at: Optional[datetime] = None
-    effective_end_date: date
-    terminated_by_user_id: Optional[int] = None
-    terminated_by_full_name: Optional[str] = None
-    termination_reason: Optional[str] = None
-
-    monthly_fee: float
-    paid_months: List[str] = Field(default_factory=list)
-    unpaid_months: List[str] = Field(default_factory=list)
-    expected_months_count: int = 0
-    paid_months_count: int = 0
-    unpaid_months_count: int = 0
-    total_expected: float = 0.0
-    total_paid: float = 0.0
-    debt_amount: float = 0.0

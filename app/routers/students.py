@@ -1,25 +1,23 @@
 from typing import Annotated, Optional, List
+import re
+from io import BytesIO
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query, File, Form, UploadFile
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_, cast, and_
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, func, or_, cast
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import selectinload
+from datetime import datetime, date
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
-from io import BytesIO
-from datetime import datetime, date
-import re
-from urllib.parse import quote
 from app.core.db import get_db
 from app.core.permissions import PERM_STUDENTS_VIEW, PERM_STUDENTS_EDIT, PERM_ATTENDANCE_VIEW
 from app.models.domain import Student, Contract
-from app.models.finance import Transaction
 from app.models.attendance import Attendance, GateLog, Session
 from app.models.enums import StudentStatus, ContractStatus
-from app.schemas.student import StudentRead, StudentCreate, StudentUpdate, StudentDebtInfo, StudentFullInfo, ParentRead
+from app.schemas.student import StudentRead, StudentCreate, StudentUpdate, StudentFullInfo, ParentRead
 from app.schemas.contract import ContractRead
-from app.schemas.transaction import TransactionRead
 from app.schemas.attendance import AttendanceRead, GateLogRead
 from app.schemas.common import DataResponse, PaginationMeta
 from app.schemas.student_with_contract import StudentWithContractCreate, StudentWithContractResponse
@@ -27,184 +25,8 @@ from app.deps import require_permission, CurrentUser
 from app.models.auth import User
 from app.core.s3 import upload_image_to_s3, upload_pdf_to_s3, upload_as_pdf_to_s3
 from app.utils.contract_pdf import ContractPDFGenerator
-from app.services.transaction_reporting import (
-    allocate_amount_for_period,
-    build_month_range,
-    normalize_unique_months,
-)
 
 router = APIRouter(prefix="/students", tags=["Students"])
-
-
-def _build_unpaid_target_months(
-    year: Optional[int],
-    month: Optional[int],
-    months: Optional[str],
-    from_date: Optional[date],
-    to_date: Optional[date],
-) -> tuple[list[tuple[int, int]], bool, Optional[date], Optional[date], Optional[int]]:
-    today = date.today()
-    use_date_range = from_date is not None or to_date is not None
-
-    if use_date_range:
-        if from_date is None:
-            from_date = date(today.year, 1, 1)
-        if to_date is None:
-            to_date = today
-        if from_date > to_date:
-            raise HTTPException(status_code=400, detail="from_date must be before or equal to to_date")
-        target_months = build_month_range(from_date, to_date)
-        return target_months, True, from_date, to_date, None
-
-    target_year = year if year is not None else today.year
-    month_list: list[int]
-    if months:
-        try:
-            month_list = [int(m.strip()) for m in months.split(",") if m.strip()]
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid months format. Use comma-separated numbers (e.g., '1,2,3')",
-            )
-        for month_value in month_list:
-            if month_value < 1 or month_value > 12:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid month: {month_value}. Must be between 1 and 12",
-                )
-    elif month is not None:
-        month_list = [month]
-    else:
-        month_list = list(range(1, 13))
-
-    target_months = [(target_year, month_value) for month_value in month_list]
-    return target_months, False, None, None, target_year
-
-
-async def _collect_unpaid_rows(
-    db: AsyncSession,
-    target_months: list[tuple[int, int]],
-    group_id: Optional[int],
-    include_group_names: bool = False,
-) -> list[dict]:
-    from app.models.enums import PaymentStatus
-
-    if not target_months:
-        return []
-
-    students_query = select(Student).where(Student.status == StudentStatus.ACTIVE)
-    if group_id:
-        students_query = students_query.where(Student.group_id == group_id)
-
-    students_result = await db.execute(students_query)
-    students = students_result.scalars().all()
-    if not students:
-        return []
-
-    student_ids = [student.id for student in students]
-    contracts_result = await db.execute(
-        select(Contract).where(Contract.student_id.in_(student_ids))
-    )
-    contracts = contracts_result.scalars().all()
-
-    contracts_by_student: dict[int, list[Contract]] = {student_id: [] for student_id in student_ids}
-    contract_window_by_id: dict[int, tuple[date, date, float]] = {}
-    for contract in contracts:
-        contracts_by_student.setdefault(contract.student_id, []).append(contract)
-        effective_end_date = contract.end_date
-        if contract.terminated_at:
-            termination_date = contract.terminated_at.date()
-            if termination_date < effective_end_date:
-                effective_end_date = termination_date
-        contract_window_by_id[contract.id] = (
-            contract.start_date.replace(day=1),
-            effective_end_date.replace(day=1),
-            float(contract.monthly_fee),
-        )
-
-    month_set = set(target_months)
-    min_year = min(year_value for year_value, _ in target_months)
-    max_year = max(year_value for year_value, _ in target_months)
-
-    transaction_result = await db.execute(
-        select(
-            Transaction.student_id,
-            Transaction.contract_id,
-            Transaction.payment_year,
-            Transaction.payment_months,
-        ).where(
-            and_(
-                Transaction.status == PaymentStatus.SUCCESS,
-                Transaction.student_id.in_(student_ids),
-                Transaction.contract_id.isnot(None),
-                Transaction.payment_year.isnot(None),
-                Transaction.payment_year >= min_year,
-                Transaction.payment_year <= max_year,
-            )
-        )
-    )
-
-    covered_contract_months: set[tuple[int, int, int, int]] = set()
-    for row in transaction_result.all():
-        if row.student_id is None or row.contract_id is None or row.payment_year is None:
-            continue
-        for month_num in normalize_unique_months(row.payment_months):
-            if (row.payment_year, month_num) in month_set:
-                covered_contract_months.add((row.student_id, row.contract_id, row.payment_year, month_num))
-
-    group_name_by_id: dict[int, str] = {}
-    if include_group_names:
-        from app.models.domain import Group
-
-        group_ids = {student.group_id for student in students if student.group_id is not None}
-        if group_ids:
-            group_result = await db.execute(
-                select(Group.id, Group.name).where(Group.id.in_(group_ids))
-            )
-            group_name_by_id = {group_row.id: group_row.name for group_row in group_result.all()}
-
-    rows: list[dict] = []
-    for student in students:
-        student_contracts = contracts_by_student.get(student.id, [])
-        if not student_contracts:
-            continue
-
-        total_expected = 0.0
-        total_paid = 0.0
-        for year_value, month_value in target_months:
-            target_date = date(year_value, month_value, 1)
-            for contract in student_contracts:
-                contract_window = contract_window_by_id.get(contract.id)
-                if not contract_window:
-                    continue
-                contract_start_month, contract_end_month, monthly_fee = contract_window
-                if contract_start_month <= target_date <= contract_end_month:
-                    total_expected += monthly_fee
-                    if (student.id, contract.id, year_value, month_value) in covered_contract_months:
-                        total_paid += monthly_fee
-
-        if total_expected == 0:
-            continue
-
-        debt_amount = total_expected - total_paid
-        if debt_amount <= 0.01:
-            continue
-
-        rows.append(
-            {
-                "student": student,
-                "group_name": group_name_by_id.get(student.group_id, "") if include_group_names else "",
-                "total_expected": total_expected,
-                "total_paid": total_paid,
-                "debt_amount": debt_amount,
-                "active_contracts_count": sum(
-                    1 for contract in student_contracts if contract.status == ContractStatus.ACTIVE
-                ),
-            }
-        )
-
-    rows.sort(key=lambda row: row["debt_amount"], reverse=True)
-    return rows
 
 
 @router.get("/search", response_model=DataResponse[list[StudentRead]], dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
@@ -367,6 +189,7 @@ async def get_students(
     )
 
 
+'''
 @router.get("/unpaid", response_model=DataResponse[list[StudentDebtInfo]], dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
 async def get_unpaid_students(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -577,11 +400,13 @@ async def export_unpaid_students(
     )
 
 
+'''
+
 @router.get("/comprehensive-export", dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
 async def export_comprehensive_student_data(
     db: Annotated[AsyncSession, Depends(get_db)],
-    from_date: Optional[date] = Query(None, description="Start date for payment history (YYYY-MM-DD)"),
-    to_date: Optional[date] = Query(None, description="End date for payment history (YYYY-MM-DD)"),
+    from_date: Optional[date] = Query(None, description="Filter contracts from date (YYYY-MM-DD)"),
+    to_date: Optional[date] = Query(None, description="Filter contracts to date (YYYY-MM-DD)"),
     group_id: Optional[int] = Query(None, description="Filter by specific group"),
     status: Optional[str] = Query(None, description="Filter by student status (active, archived, etc.)"),
 ):
@@ -589,42 +414,17 @@ async def export_comprehensive_student_data(
     Export comprehensive student data to Excel file including:
     - Student information (name, phone, address, date of birth, status)
     - Contract details (number, start/end dates, monthly fee, status, termination info)
-    - Payment history (paid/unpaid months with details)
     - Group information
     - Parent information
 
     Filters:
-    - from_date: Start date for payment history analysis (defaults to start of current year)
-    - to_date: End date for payment history analysis (defaults to end of current year)
+    - from_date: Include contracts overlapping this start date
+    - to_date: Include contracts overlapping this end date
     - group_id: Filter students by specific group
     - status: Filter by student status (e.g., 'active', 'archived')
     """
-    from app.models.enums import PaymentStatus
-    from decimal import Decimal
-    from datetime import date as date_type
-    from dateutil.relativedelta import relativedelta
-    from sqlalchemy.orm import selectinload
-
-    # Default date range
-    today = date_type.today()
-    if from_date is None:
-        from_date = date_type(today.year, 1, 1)  # Start of current year
-    if to_date is None:
-        to_date = date_type(today.year, 12, 31)  # End of current year (include advance payments)
-
-    if from_date > to_date:
+    if from_date and to_date and from_date > to_date:
         raise HTTPException(status_code=400, detail="from_date must be before or equal to to_date")
-
-    # Calculate all months in the date range
-    all_months = []
-    current_date = from_date.replace(day=1)
-    end_date = to_date.replace(day=1)
-
-    while current_date <= end_date:
-        all_months.append((current_date.year, current_date.month))
-        current_date += relativedelta(months=1)
-    range_start_month = from_date.replace(day=1)
-    range_end_month = to_date.replace(day=1)
 
     # Build student query with filters
     students_query = select(Student).options(
@@ -637,87 +437,54 @@ async def export_comprehensive_student_data(
         students_query = students_query.where(Student.group_id == group_id)
 
     if status:
-        students_query = students_query.where(Student.status == status)
+        try:
+            student_status = StudentStatus(status.lower())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid student status: {status}")
+        students_query = students_query.where(Student.status == student_status)
 
-    students_result = await db.execute(students_query)
+    students_result = await db.execute(
+        students_query.order_by(Student.last_name.asc(), Student.first_name.asc())
+    )
     students = students_result.scalars().all()
     active_students_count = sum(1 for s in students if s.status == StudentStatus.ACTIVE)
     inactive_students_count = sum(1 for s in students if s.status == StudentStatus.INACTIVE)
-
-    # Preload successful payments for all selected students in one query.
-    # Coverage is used for paid/unpaid month status, while amount uses real transaction value.
-    covered_by_contract_month: set[tuple[int, int, int, int]] = set()
-    paid_amount_by_contract_month: dict[tuple[int, int, int, int], Decimal] = {}
-
-    student_ids = [student.id for student in students]
-    month_set = set(all_months)
-    if student_ids and all_months:
-        min_year = min(y for y, _ in all_months)
-        max_year = max(y for y, _ in all_months)
-
-        payments_result = await db.execute(
-            select(
-                Transaction.student_id,
-                Transaction.contract_id,
-                Transaction.amount,
-                Transaction.payment_year,
-                Transaction.payment_months,
-            ).where(
-                and_(
-                    Transaction.status == PaymentStatus.SUCCESS,
-                    Transaction.student_id.in_(student_ids),
-                    Transaction.contract_id.isnot(None),
-                    Transaction.payment_year.isnot(None),
-                    Transaction.payment_year >= min_year,
-                    Transaction.payment_year <= max_year,
-                )
-            )
-        )
-        payment_rows = payments_result.all()
-
-        for row in payment_rows:
-            if row.student_id is None or row.contract_id is None or row.payment_year is None:
-                continue
-
-            matched_months, allocated_amount = allocate_amount_for_period(
-                amount=row.amount,
-                payment_year=row.payment_year,
-                payment_months=row.payment_months,
-                month_set=month_set,
-            )
-            if not matched_months:
-                continue
-
-            per_month_amount = allocated_amount / Decimal(len(matched_months))
-            for month_num in matched_months:
-                key = (row.student_id, row.contract_id, row.payment_year, month_num)
-                covered_by_contract_month.add(key)
-                paid_amount_by_contract_month[key] = (
-                    paid_amount_by_contract_month.get(key, Decimal("0")) + per_month_amount
-                )
 
     # Prepare data for Excel
     student_data_list = []
 
     for student in students:
-        # Get all contracts for this student
-        contracts = student.contracts
-
-        # Get parent information
         parent_names = ", ".join([f"{p.first_name} {p.last_name}" for p in student.parents]) if student.parents else "N/A"
         parent_phones = ", ".join([p.phone for p in student.parents]) if student.parents else "N/A"
-
-        # Get group name
         group_name = student.group.name if student.group else "N/A"
+        contracts = list(student.contracts)
 
-        # Process each contract
+        if from_date or to_date:
+            filtered_contracts = []
+            for contract in contracts:
+                effective_end_date = contract.end_date
+                if contract.terminated_at:
+                    termination_date = contract.terminated_at.date()
+                    if termination_date < effective_end_date:
+                        effective_end_date = termination_date
+
+                overlaps_from = from_date is None or effective_end_date >= from_date
+                overlaps_to = to_date is None or contract.start_date <= to_date
+                if overlaps_from and overlaps_to:
+                    filtered_contracts.append(contract)
+            contracts = filtered_contracts
+
         if not contracts:
-            # Student without contracts
+            if from_date or to_date:
+                continue
             student_data_list.append({
                 "student_id": student.id,
                 "first_name": student.first_name,
                 "last_name": student.last_name,
                 "date_of_birth": student.date_of_birth.strftime("%Y-%m-%d"),
+                "height": student.height,
+                "weight": student.weight,
+                "pnfl": student.pnfl,
                 "phone": student.phone or "N/A",
                 "address": student.address or "N/A",
                 "status": student.status.value,
@@ -731,87 +498,35 @@ async def export_comprehensive_student_data(
                 "monthly_fee": 0,
                 "terminated_at": "N/A",
                 "termination_reason": "N/A",
-                "paid_months": "N/A",
-                "unpaid_months": "N/A",
-                "total_expected": 0,
-                "total_paid": 0,
-                "debt_amount": 0,
             })
-        else:
-            for contract in contracts:
-                # Calculate payment status for this contract
-                total_expected = 0
-                total_paid = Decimal("0")
-                settled_equivalent = 0.0
-                paid_months_list = []
-                unpaid_months_list = []
-                monthly_fee = float(contract.monthly_fee)
-                contract_start_month = contract.start_date.replace(day=1)
+            continue
 
-                # Determine effective contract window and intersect with requested date range.
-                effective_end_date = contract.end_date
-                if contract.terminated_at:
-                    termination_date = contract.terminated_at.date()
-                    if termination_date < effective_end_date:
-                        effective_end_date = termination_date
-                contract_end_month = effective_end_date.replace(day=1)
+        for contract in contracts:
+            terminated_at_str = contract.terminated_at.strftime("%Y-%m-%d") if contract.terminated_at else "N/A"
+            termination_reason = contract.termination_reason if contract.termination_reason else "N/A"
 
-                analysis_start = max(contract_start_month, range_start_month)
-                analysis_end = min(contract_end_month, range_end_month)
-
-                if analysis_start <= analysis_end:
-                    target_date = analysis_start
-                    while target_date <= analysis_end:
-                        year_val = target_date.year
-                        month_val = target_date.month
-                        contract_month_key = (student.id, contract.id, year_val, month_val)
-                        total_expected += monthly_fee
-                        month_paid = paid_amount_by_contract_month.get(
-                            contract_month_key,
-                            Decimal("0"),
-                        )
-                        month_is_covered = contract_month_key in covered_by_contract_month
-
-                        month_str = f"{year_val}-{month_val:02d}"
-                        if month_is_covered:
-                            paid_months_list.append(month_str)
-                            settled_equivalent += monthly_fee
-                        else:
-                            unpaid_months_list.append(month_str)
-                        total_paid += month_paid
-
-                        target_date += relativedelta(months=1)
-
-                debt_amount = max(total_expected - settled_equivalent, 0)
-
-                # Format termination info
-                terminated_at_str = contract.terminated_at.strftime("%Y-%m-%d") if contract.terminated_at else "N/A"
-                termination_reason = contract.termination_reason if contract.termination_reason else "N/A"
-
-                student_data_list.append({
-                    "student_id": student.id,
-                    "first_name": student.first_name,
-                    "last_name": student.last_name,
-                    "date_of_birth": student.date_of_birth.strftime("%Y-%m-%d"),
-                    "phone": student.phone or "N/A",
-                    "address": student.address or "N/A",
-                    "status": student.status.value,
-                    "group": group_name,
-                    "parent_names": parent_names,
-                    "parent_phones": parent_phones,
-                    "contract_number": contract.contract_number or "N/A",
-                    "contract_start": contract.start_date.strftime("%Y-%m-%d"),
-                    "contract_end": contract.end_date.strftime("%Y-%m-%d"),
-                    "contract_status": contract.status.value,
-                    "monthly_fee": float(contract.monthly_fee),
-                    "terminated_at": terminated_at_str,
-                    "termination_reason": termination_reason,
-                    "paid_months": ", ".join(paid_months_list) if paid_months_list else "None",
-                    "unpaid_months": ", ".join(unpaid_months_list) if unpaid_months_list else "None",
-                    "total_expected": total_expected,
-                    "total_paid": float(total_paid.quantize(Decimal("0.01"))),
-                    "debt_amount": debt_amount,
-                })
+            student_data_list.append({
+                "student_id": student.id,
+                "first_name": student.first_name,
+                "last_name": student.last_name,
+                "date_of_birth": student.date_of_birth.strftime("%Y-%m-%d"),
+                "height": student.height,
+                "weight": student.weight,
+                "pnfl": student.pnfl,
+                "phone": student.phone or "N/A",
+                "address": student.address or "N/A",
+                "status": student.status.value,
+                "group": group_name,
+                "parent_names": parent_names,
+                "parent_phones": parent_phones,
+                "contract_number": contract.contract_number or "N/A",
+                "contract_start": contract.start_date.strftime("%Y-%m-%d"),
+                "contract_end": contract.end_date.strftime("%Y-%m-%d"),
+                "contract_status": contract.status.value,
+                "monthly_fee": float(contract.monthly_fee),
+                "terminated_at": terminated_at_str,
+                "termination_reason": termination_reason,
+            })
 
     # Create Excel workbook
     wb = Workbook()
@@ -829,6 +544,9 @@ async def export_comprehensive_student_data(
         "First Name",
         "Last Name",
         "Date of Birth",
+        "Height",
+        "Weight",
+        "PNFL",
         "Phone",
         "Address",
         "Status",
@@ -842,11 +560,6 @@ async def export_comprehensive_student_data(
         "Monthly Fee",
         "Terminated At",
         "Termination Reason",
-        "Paid Months",
-        "Unpaid Months",
-        "Total Expected",
-        "Total Paid",
-        "Debt Amount",
     ]
 
     # Write headers
@@ -882,24 +595,22 @@ async def export_comprehensive_student_data(
         ws.cell(row=row_num, column=2, value=student_data["first_name"])
         ws.cell(row=row_num, column=3, value=student_data["last_name"])
         ws.cell(row=row_num, column=4, value=student_data["date_of_birth"])
-        ws.cell(row=row_num, column=5, value=student_data["phone"])
-        ws.cell(row=row_num, column=6, value=student_data["address"])
-        ws.cell(row=row_num, column=7, value=student_data["status"])
-        ws.cell(row=row_num, column=8, value=student_data["group"])
-        ws.cell(row=row_num, column=9, value=student_data["parent_names"])
-        ws.cell(row=row_num, column=10, value=student_data["parent_phones"])
-        ws.cell(row=row_num, column=11, value=student_data["contract_number"])
-        ws.cell(row=row_num, column=12, value=student_data["contract_start"])
-        ws.cell(row=row_num, column=13, value=student_data["contract_end"])
-        ws.cell(row=row_num, column=14, value=student_data["contract_status"])
-        ws.cell(row=row_num, column=15, value=student_data["monthly_fee"])
-        ws.cell(row=row_num, column=16, value=student_data["terminated_at"])
-        ws.cell(row=row_num, column=17, value=student_data["termination_reason"])
-        ws.cell(row=row_num, column=18, value=student_data["paid_months"])
-        ws.cell(row=row_num, column=19, value=student_data["unpaid_months"])
-        ws.cell(row=row_num, column=20, value=student_data["total_expected"])
-        ws.cell(row=row_num, column=21, value=student_data["total_paid"])
-        ws.cell(row=row_num, column=22, value=student_data["debt_amount"])
+        ws.cell(row=row_num, column=5, value=student_data["height"])
+        ws.cell(row=row_num, column=6, value=student_data["weight"])
+        ws.cell(row=row_num, column=7, value=student_data["pnfl"])
+        ws.cell(row=row_num, column=8, value=student_data["phone"])
+        ws.cell(row=row_num, column=9, value=student_data["address"])
+        ws.cell(row=row_num, column=10, value=student_data["status"])
+        ws.cell(row=row_num, column=11, value=student_data["group"])
+        ws.cell(row=row_num, column=12, value=student_data["parent_names"])
+        ws.cell(row=row_num, column=13, value=student_data["parent_phones"])
+        ws.cell(row=row_num, column=14, value=student_data["contract_number"])
+        ws.cell(row=row_num, column=15, value=student_data["contract_start"])
+        ws.cell(row=row_num, column=16, value=student_data["contract_end"])
+        ws.cell(row=row_num, column=17, value=student_data["contract_status"])
+        ws.cell(row=row_num, column=18, value=student_data["monthly_fee"])
+        ws.cell(row=row_num, column=19, value=student_data["terminated_at"])
+        ws.cell(row=row_num, column=20, value=student_data["termination_reason"])
 
     current_row = 2
     for row in non_terminated_rows:
@@ -916,10 +627,10 @@ async def export_comprehensive_student_data(
 
     # Adjust column widths
     column_widths = {
-        'A': 12, 'B': 15, 'C': 15, 'D': 15, 'E': 15, 'F': 30,
-        'G': 12, 'H': 20, 'I': 25, 'J': 20, 'K': 18, 'L': 15,
-        'M': 15, 'N': 15, 'O': 12, 'P': 15, 'Q': 20, 'R': 50,
-        'S': 50, 'T': 15, 'U': 15, 'V': 15
+        'A': 12, 'B': 15, 'C': 15, 'D': 15, 'E': 10, 'F': 10,
+        'G': 18, 'H': 15, 'I': 30, 'J': 12, 'K': 20, 'L': 25,
+        'M': 20, 'N': 18, 'O': 15, 'P': 15, 'Q': 15, 'R': 12,
+        'S': 15, 'T': 20
     }
 
     for col, width in column_widths.items():
@@ -929,14 +640,14 @@ async def export_comprehensive_student_data(
     if student_data_list:
         summary_row = current_row + 1
         ws.cell(row=summary_row, column=1, value="TOTALS").font = Font(bold=True)
-        ws.cell(row=summary_row, column=20, value=sum(d["total_expected"] for d in student_data_list)).font = Font(bold=True)
-        ws.cell(row=summary_row, column=21, value=sum(d["total_paid"] for d in student_data_list)).font = Font(bold=True)
-        ws.cell(row=summary_row, column=22, value=sum(d["debt_amount"] for d in student_data_list)).font = Font(bold=True)
 
         # Add metadata
         metadata_row = summary_row + 2
         ws.cell(row=metadata_row, column=1, value=f"Report Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}").font = Font(italic=True)
-        ws.cell(row=metadata_row + 1, column=1, value=f"Period: {from_date.strftime('%Y-%m-%d')} to {to_date.strftime('%Y-%m-%d')}").font = Font(italic=True)
+        if from_date or to_date:
+            from_display = from_date.strftime('%Y-%m-%d') if from_date else "..."
+            to_display = to_date.strftime('%Y-%m-%d') if to_date else "..."
+            ws.cell(row=metadata_row + 1, column=1, value=f"Contract Period Filter: {from_display} to {to_display}").font = Font(italic=True)
         ws.cell(row=metadata_row + 2, column=1, value=f"Total Students: {len(students)}").font = Font(italic=True)
         ws.cell(row=metadata_row + 3, column=1, value=f"Total Contracts: {len(student_data_list)}").font = Font(italic=True)
         ws.cell(row=metadata_row + 4, column=1, value=f"Active Students: {active_students_count}").font = Font(italic=True)
@@ -950,7 +661,12 @@ async def export_comprehensive_student_data(
     # Generate filename
     group_suffix = f"_group{group_id}" if group_id else ""
     status_suffix = f"_{status}" if status else ""
-    date_str = f"{from_date.strftime('%Y%m%d')}_{to_date.strftime('%Y%m%d')}"
+    if from_date or to_date:
+        from_part = from_date.strftime('%Y%m%d') if from_date else "start"
+        to_part = to_date.strftime('%Y%m%d') if to_date else "end"
+        date_str = f"{from_part}_{to_part}"
+    else:
+        date_str = datetime.now().strftime('%Y%m%d')
     filename = f"comprehensive_student_data_{date_str}{group_suffix}{status_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
     # Return as streaming response
@@ -960,12 +676,15 @@ async def export_comprehensive_student_data(
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
-
 @router.post("", response_model=DataResponse[StudentRead], dependencies=[Depends(require_permission(PERM_STUDENTS_EDIT))])
 async def create_student(
     data: StudentCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    existing_pnfl = await db.execute(select(Student).where(Student.pnfl == data.pnfl))
+    if existing_pnfl.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="PNFL already exists. Please use a unique PNFL")
+
     if data.face_id:
         existing_face_id = await db.execute(select(Student).where(Student.face_id == data.face_id))
         if existing_face_id.scalar_one_or_none():
@@ -1043,6 +762,9 @@ async def create_student_with_contract(
         "first_name": "Alvaro",
         "last_name": "Marata",
         "date_of_birth": "2010-12-06",
+        "height": 152,
+        "weight": 43,
+        "pnfl": "12345678901234",
         "phone": "998901234567",
         "address": "Toshkent shahar",
         "status": "active",
@@ -1128,17 +850,31 @@ async def create_student_with_contract(
     first_name = student_info.get("first_name")
     last_name = student_info.get("last_name")
     date_of_birth = student_info.get("date_of_birth")
+    height = student_info.get("height")
+    weight = student_info.get("weight")
+    pnfl = str(student_info.get("pnfl") or "").strip()
     phone = student_info.get("phone")
     address = student_info.get("address")
     status = student_info.get("status", "active")
     group_id = student_info.get("group_id")
 
     # Validate required fields
-    if not all([first_name, last_name, date_of_birth, group_id]):
+    if not all([first_name, last_name, date_of_birth, group_id, pnfl]) or height in (None, "") or weight in (None, ""):
         raise HTTPException(
             status_code=400,
-            detail="Missing required fields in student_data: first_name, last_name, date_of_birth, group_id"
+            detail="Missing required fields in student_data: first_name, last_name, date_of_birth, height, weight, pnfl, group_id"
         )
+    if len(pnfl) != 14:
+        raise HTTPException(status_code=400, detail="PNFL must be exactly 14 characters")
+    try:
+        height = int(height)
+        weight = int(weight)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="height and weight must be integers")
+
+    existing_pnfl = await db.execute(select(Student).where(Student.pnfl == pnfl))
+    if existing_pnfl.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="PNFL already exists. Please use a unique PNFL")
     contract_images_urls = []
     if contract_image_1:
         contract_images_urls.append(await upload_image_to_s3(contract_image_1, "contracts"))
@@ -1272,6 +1008,9 @@ async def create_student_with_contract(
         first_name=first_name,
         last_name=last_name,
         date_of_birth=date_of_birth,
+        height=height,
+        weight=weight,
+        pnfl=pnfl,
         phone=phone,
         address=address,
         status=student_status,
@@ -1515,7 +1254,6 @@ async def get_student_full_info(
     - Contracts
     - Group
     - Coach (teacher)
-    - Payment history (transactions)
     - Attendance records
     """
     from app.models.domain import Contract, Parent, Group
@@ -1553,24 +1291,13 @@ async def get_student_full_info(
             )
             coach = coach_result.scalar_one_or_none()
 
-    # Fetch transactions
-    transactions_result = await db.execute(
-        select(Transaction).where(Transaction.student_id == student_id).order_by(Transaction.created_at.desc())
-    )
-    transactions = transactions_result.scalars().all()
-
     # Fetch attendance records
     attendances_result = await db.execute(
         select(Attendance).where(Attendance.student_id == student_id).order_by(Attendance.created_at.desc())
     )
     attendances = attendances_result.scalars().all()
 
-    # Calculate total payments (only SUCCESS status)
-    from app.models.enums import PaymentStatus, ContractStatus
-    total_payments = sum(
-        t.amount for t in transactions if t.status == PaymentStatus.SUCCESS
-    )
-
+    from app.models.enums import ContractStatus
     # Count active contracts
     active_contracts_count = sum(1 for c in contracts if c.status == ContractStatus.ACTIVE)
 
@@ -1584,9 +1311,7 @@ async def get_student_full_info(
         contracts=[ContractRead.model_validate(c) for c in contracts],
         group=GroupRead.model_validate(group) if group else None,
         coach=UserRead.model_validate(coach) if coach else None,
-        transactions=[TransactionRead.model_validate(t) for t in transactions],
         attendances=[AttendanceRead.model_validate(a) for a in attendances],
-        total_payments=total_payments,
         active_contracts_count=active_contracts_count,
     )
 
@@ -1621,6 +1346,13 @@ async def update_student(
         )
         if existing_face_id.scalar_one_or_none():
             raise HTTPException(status_code=400, detail="Face ID already exists. Please use a unique Face ID")
+
+    if "pnfl" in update_data and update_data["pnfl"] is not None:
+        existing_pnfl = await db.execute(
+            select(Student).where(Student.pnfl == update_data["pnfl"], Student.id != student_id)
+        )
+        if existing_pnfl.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="PNFL already exists. Please use a unique PNFL")
 
     # Check capacity when assigning to a group or changing status to ACTIVE
     target_group_id = update_data.get("group_id", student.group_id)
@@ -1687,6 +1419,7 @@ async def get_student_contracts(
     return DataResponse(data=[ContractRead.model_validate(c) for c in contracts])
 
 
+'''
 @router.get("/{student_id}/transactions", response_model=DataResponse[list[TransactionRead]], dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
 async def get_student_transactions(
     student_id: int,
@@ -1696,6 +1429,8 @@ async def get_student_transactions(
     transactions = result.scalars().all()
     return DataResponse(data=[TransactionRead.model_validate(t) for t in transactions])
 
+
+'''
 
 @router.get("/{student_id}/attendance", response_model=DataResponse[list[AttendanceRead]], dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
 async def get_student_attendance(

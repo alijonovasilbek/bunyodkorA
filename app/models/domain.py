@@ -13,6 +13,9 @@ class Student(Base, TimestampMixin):
     first_name: Mapped[str] = mapped_column(String(100), nullable=False)
     last_name: Mapped[str] = mapped_column(String(100), nullable=False)
     date_of_birth: Mapped[date] = mapped_column(Date, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    weight: Mapped[int] = mapped_column(Integer, nullable=False)
+    pnfl: Mapped[str] = mapped_column(String(14), unique=True, index=True, nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -119,7 +122,6 @@ class Contract(Base, TimestampMixin):
 
     student: Mapped["Student"] = relationship("Student", back_populates="contracts")
     group: Mapped["Group"] = relationship("Group")
-    transactions: Mapped[list["Transaction"]] = relationship("Transaction", back_populates="contract")
     terminated_by: Mapped["User"] = relationship("User", foreign_keys=[terminated_by_user_id])
 
 

@@ -59,8 +59,8 @@ for path in bold_font_locations:
     if os.path.exists(path):
         bold_font_path = path
         break
-print("✅ Normal font path:", font_path)
-print("✅ Bold font path:", bold_font_path)
+print("[OK] Normal font path:", font_path)
+print("[OK] Bold font path:", bold_font_path)
 # Shriftlarni ro'yxatdan o'tkazish logikasi
 FONT_NORMAL = 'DejaVu'
 FONT_BOLD = 'DejaVu-Bold'
@@ -340,7 +340,7 @@ class ContractPDFGenerator:
                         alignment=TA_CENTER
                     ))
             except Exception as e:
-                print(f"⚠️ Rasm yuklashda xato: {e}")
+                print(f"[WARN] Rasm yuklashda xato: {e}")
                 left_block = Paragraph("[Rasm yuklab bo'lmadi]", ParagraphStyle(
                     name='PlaceholderStyle',
                     fontSize=8,
@@ -910,7 +910,7 @@ class ContractPDFGenerator:
         A4_WIDTH = A4[0]  # 595.27 points
         A4_HEIGHT = A4[1]  # 841.89 points
 
-        print(f"🔗 {len(pdf_urls)} ta PDF faylni birlashtirish (A4 razmeriga)...")
+        print(f"[INFO] {len(pdf_urls)} ta PDF faylni birlashtirish (A4 razmeriga)...")
 
         # Download all PDFs synchronously
         def download_all_pdfs_sync():
@@ -920,7 +920,7 @@ class ContractPDFGenerator:
                 try:
                     if url.startswith(('http://', 'https://')):
                         # Download from S3
-                        print(f"📥 Yuklanmoqda: {url}")
+                        print(f"[DOWNLOAD] Yuklanmoqda: {url}")
                         with httpx.Client(timeout=30.0) as client:
                             response = client.get(url)
                             response.raise_for_status()
@@ -929,11 +929,11 @@ class ContractPDFGenerator:
                         # Save to temp file
                         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_pdf:
                             temp_pdf.write(content)
-                            print(f"✓ Yuklandi ({len(content)} bytes)")
+                            print(f"[OK] Yuklandi ({len(content)} bytes)")
                             results.append((temp_pdf.name, temp_pdf.name))
                     else:
                         # Local file
-                        print(f"📂 Lokal fayl: {url}")
+                        print(f"[FILE] Lokal fayl: {url}")
                         results.append((url, None))
                 except Exception as e:
                     print(f"!!! PDF yuklab bo'lmadi: {type(e).__name__}: {e}")
@@ -951,7 +951,7 @@ class ContractPDFGenerator:
                 reader = PdfReader(f)
                 for page in reader.pages:
                     writer.add_page(page)
-            print(f"✓ Asosiy shartnoma PDF qo'shildi ({len(reader.pages)} sahifa)")
+            print(f"[OK] Asosiy shartnoma PDF qo'shildi ({len(reader.pages)} sahifa)")
         except Exception as e:
             print(f"!!! Asosiy PDF xato: {e}")
             raise
@@ -973,7 +973,7 @@ class ContractPDFGenerator:
                 with open(pdf_path, 'rb') as f:
                     reader = PdfReader(f)
                     page_count = len(reader.pages)
-                    print(f"📄 [{merged_count + 1}] Qayta ishlanmoqda: {page_count} sahifa")
+                    print(f"[PAGE] [{merged_count + 1}] Qayta ishlanmoqda: {page_count} sahifa")
 
                     # Process each page
                     for page_num, page in enumerate(reader.pages):
@@ -1009,14 +1009,14 @@ class ContractPDFGenerator:
                             # Add to writer
                             writer.add_page(page)
                             total_pages += 1
-                            print(f"  ✓ Sahifa {page_num + 1}/{page_count} - A4 ga moslandi (scale: {scale:.2f})")
+                            print(f"  [OK] Sahifa {page_num + 1}/{page_count} - A4 ga moslandi (scale: {scale:.2f})")
 
                         except Exception as page_error:
                             print(f"  !!! Sahifa {page_num + 1} xato: {type(page_error).__name__}: {page_error}")
                             continue
 
                 merged_count += 1
-                print(f"✓ [{merged_count}] PDF to'liq qayta ishlandi")
+                print(f"[OK] [{merged_count}] PDF to'liq qayta ishlandi")
 
             except Exception as e:
                 print(f"!!! PDF ni qayta ishlashda xato: {type(e).__name__}: {e}")
@@ -1029,8 +1029,8 @@ class ContractPDFGenerator:
         with open(output_pdf, 'wb') as f:
             writer.write(f)
 
-        print(f"✅ Jami {merged_count} ta PDF ({total_pages} sahifa) birlashtirildi")
-        print(f"✅ Barcha sahifalar A4 razmeriga moslandi: {output_pdf}")
+        print(f"[OK] Jami {merged_count} ta PDF ({total_pages} sahifa) birlashtirildi")
+        print(f"[OK] Barcha sahifalar A4 razmeriga moslandi: {output_pdf}")
 
         # Cleanup temp files
         for f in temp_files_to_delete:
@@ -1049,7 +1049,7 @@ class ContractPDFGenerator:
         try:
             self.doc.filename = output_file
             self.doc.build(self.get_flowables())
-            print(f"✓ Шартнома муваффақиятли яратилди: {output_file}")
+            print(f"[OK] Шартнома муваффақиятли яратилди: {output_file}")
             image_urls = []
             data = self.data
 
@@ -1106,7 +1106,7 @@ class ContractPDFGenerator:
                 image_urls.append(contract_imgs_list[4])
 
             if image_urls:
-                print(f"🖼 {len(image_urls)} ta ilova fayl PDFga qo‘shilmoqda...")
+                print(f"[INFO] {len(image_urls)} ta ilova fayl PDFga qo'shilmoqda...")
                 merged_output = output_file.replace(".pdf", "_full.pdf")
                 self.add_attachments_to_pdf(output_file, image_urls, merged_output)
                 return merged_output

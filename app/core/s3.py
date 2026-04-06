@@ -18,6 +18,28 @@ s3 = boto3.client(
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY
 )
 
+S3_FOLDER_RENAMES = {
+    "contracts": "contractsa",
+    "student-documents": "student-documentsa",
+    "contract-pdfs": "contract-pdfsa",
+    "konspekts": "konspektsa",
+}
+
+
+def remap_s3_folder(folder: str) -> str:
+    normalized_folder = (folder or "").strip("/")
+    if not normalized_folder:
+        return normalized_folder
+
+    for source_prefix, target_prefix in S3_FOLDER_RENAMES.items():
+        if normalized_folder == source_prefix:
+            return target_prefix
+        if normalized_folder.startswith(f"{source_prefix}/"):
+            suffix = normalized_folder[len(source_prefix):]
+            return f"{target_prefix}{suffix}"
+
+    return normalized_folder
+
 async def upload_image_to_s3(file: UploadFile, folder: str = "contracts") -> str:
     """
     Upload image to S3 with automatic format conversion.
@@ -36,6 +58,8 @@ async def upload_image_to_s3(file: UploadFile, folder: str = "contracts") -> str
         return None
 
     try:
+        folder = remap_s3_folder(folder)
+
         # Read file content
         content = await file.read()
 
@@ -191,6 +215,8 @@ async def upload_as_pdf_to_s3(file: UploadFile, folder: str = "student-documents
         return None
 
     try:
+        folder = remap_s3_folder(folder)
+
         # Read file content
         content = await file.read()
 
@@ -308,6 +334,8 @@ async def upload_pdf_to_s3(pdf_file_path: str, contract_number: str, folder: str
     import asyncio
 
     try:
+        folder = remap_s3_folder(folder)
+
         # Read PDF file asynchronously
         def _read_and_upload():
             with open(pdf_file_path, 'rb') as f:

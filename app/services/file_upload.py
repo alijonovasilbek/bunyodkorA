@@ -10,6 +10,7 @@ from typing import BinaryIO, Optional
 import boto3
 from botocore.exceptions import ClientError
 from fastapi import UploadFile
+from app.core.s3 import remap_s3_folder
 
 
 class FileUploadError(Exception):
@@ -68,6 +69,7 @@ class S3FileUploadService:
         """
         # Extract file extension
         _, ext = os.path.splitext(original_filename)
+        prefix = remap_s3_folder(prefix)
 
         # Generate unique name: prefix/YYYY-MM-DD/uuid_timestamp.ext
         date_prefix = datetime.utcnow().strftime("%Y-%m-%d")

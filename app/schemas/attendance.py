@@ -96,22 +96,6 @@ class AttendanceStats(BaseModel):
     attendance_rate: float  # Percentage of present sessions
 
 
-class DebtMonthInfo(BaseModel):
-    year: int
-    month: int
-    amount: float
-
-
-class StudentWithDebtInfo(BaseModel):
-    student_id: int
-    first_name: str
-    last_name: str
-    has_debt: bool
-    debt_amount: float
-    debt_warning: Optional[str] = None
-    overdue_months: list[DebtMonthInfo] = Field(default_factory=list)
-
-
 class GateLogRead(BaseModel):
     id: int
     allowed: bool

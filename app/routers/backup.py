@@ -35,10 +35,13 @@ async def trigger_manual_backup(user: Annotated[CurrentUser, Depends(require_sup
             detail="Backup is disabled. Please enable BACKUP_ENABLED in configuration."
         )
 
-    if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
+    if not settings.backup_telegram_bot_token or not settings.backup_telegram_chat_id:
         raise HTTPException(
             status_code=400,
-            detail="Telegram bot not configured. Please set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID."
+            detail=(
+                "Telegram backup bot not configured. "
+                "Please set TELEGRAM_BACKUP_BOT_TOKEN and TELEGRAM_BACKUP_CHAT_ID."
+            )
         )
 
     try:
@@ -48,7 +51,9 @@ async def trigger_manual_backup(user: Annotated[CurrentUser, Depends(require_sup
         return DataResponse(
             data={
                 "message": "Manual backup completed successfully",
-                "telegram_configured": bool(settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID),
+                "telegram_configured": bool(
+                    settings.backup_telegram_bot_token and settings.backup_telegram_chat_id
+                ),
             }
         )
     except Exception as e:
@@ -67,7 +72,9 @@ async def get_backup_status(user: Annotated[CurrentUser, Depends(require_super_a
         data={
             "backup_enabled": settings.BACKUP_ENABLED,
             "backup_hour": settings.BACKUP_HOUR,
-            "telegram_configured": bool(settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID),
-            "telegram_chat_id": settings.TELEGRAM_CHAT_ID if settings.TELEGRAM_CHAT_ID else None,
+            "telegram_configured": bool(
+                settings.backup_telegram_bot_token and settings.backup_telegram_chat_id
+            ),
+            "telegram_chat_id": settings.backup_telegram_chat_id or None,
         }
     )

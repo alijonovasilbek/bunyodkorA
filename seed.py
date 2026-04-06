@@ -60,12 +60,12 @@ async def seed_database():
         await db.commit()
 
         print("\n🔐 Creating super admin user...")
-        result = await db.execute(select(User).where(User.phone == "+998901234567"))
+        result = await db.execute(select(User).where(User.phone == "+998999220204"))
         existing_admin = result.scalar_one_or_none()
 
         if not existing_admin:
             super_admin = User(
-                phone="+998901234567",
+                phone="+998999220204",
                 email="string",
                 full_name="Super Admin",
                 hashed_password=hash_password("string"),
@@ -74,8 +74,8 @@ async def seed_database():
             db.add(super_admin)
             await db.commit()
             print("  ✅ Created super admin user")
-            print("  📱 Phone: +998901234567")
-            print("  🔑 Password: admin123")
+            print("  📱 Phone: +998999220204")
+            print("  🔑 Password: string")
             print("  ⚠️  PLEASE CHANGE THE PASSWORD IMMEDIATELY!")
         else:
             print("  ⏭️  Super admin already exists")

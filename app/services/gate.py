@@ -3,7 +3,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.domain import Student
 from app.models.attendance import GateLog
-from app.services.debt import check_current_month_payment
 
 
 async def process_gate_entry(
@@ -30,19 +29,6 @@ async def process_gate_entry(
         db.add(log)
         await db.commit()
         return False, "Student not found", None
-
-    has_paid = await check_current_month_payment(db, student.id)
-
-    if not has_paid:
-        log = GateLog(
-            student_id=student.id,
-            allowed=False,
-            reason="No payment for current month",
-            gate_timestamp=datetime.utcnow(),
-        )
-        db.add(log)
-        await db.commit()
-        return False, "No payment for current month", student.id
 
     log = GateLog(
         student_id=student.id,

@@ -26,9 +26,9 @@ class BackupService:
         self.backup_dir.mkdir(exist_ok=True)
 
         # Initialize Telegram bot if configured
-        if settings.TELEGRAM_BOT_TOKEN and settings.BACKUP_ENABLED:
+        if settings.backup_telegram_bot_token and settings.BACKUP_ENABLED:
             try:
-                self.bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+                self.bot = Bot(token=settings.backup_telegram_bot_token)
                 logger.info("Telegram bot initialized for backups")
             except Exception as e:
                 logger.error(f"Failed to initialize Telegram bot: {e}")
@@ -135,7 +135,8 @@ class BackupService:
         Returns:
             True if sent successfully, False otherwise
         """
-        if not self.bot or not settings.TELEGRAM_CHAT_ID:
+        backup_chat_id = settings.backup_telegram_chat_id
+        if not self.bot or not backup_chat_id:
             logger.warning("Telegram bot not configured, skipping backup upload")
             return False
 
@@ -155,16 +156,16 @@ class BackupService:
                 logger.warning(f"Backup file too large for Telegram ({file_size_mb:.2f} MB > 50 MB)")
                 # Send notification instead
                 await self.bot.send_message(
-                    chat_id=settings.TELEGRAM_CHAT_ID,
+                    chat_id=backup_chat_id,
                     text=f"⚠️ Backup created but too large to send via Telegram\n{caption}"
                 )
                 return False
 
             # Send the backup file
-            logger.info(f"Sending backup to Telegram chat: {settings.TELEGRAM_CHAT_ID}")
+            logger.info(f"Sending backup to Telegram chat: {backup_chat_id}")
             with open(backup_path, "rb") as backup_file:
                 await self.bot.send_document(
-                    chat_id=settings.TELEGRAM_CHAT_ID,
+                    chat_id=backup_chat_id,
                     document=backup_file,
                     filename=backup_path.name,
                     caption=caption
@@ -219,10 +220,11 @@ class BackupService:
             if not backup_path:
                 logger.error("Backup creation failed")
                 # Send error notification to Telegram if bot is configured
-                if self.bot and settings.TELEGRAM_CHAT_ID:
+                backup_chat_id = settings.backup_telegram_chat_id
+                if self.bot and backup_chat_id:
                     try:
                         await self.bot.send_message(
-                            chat_id=settings.TELEGRAM_CHAT_ID,
+                            chat_id=backup_chat_id,
                             text=f"❌ Database backup failed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                         )
                     except Exception:

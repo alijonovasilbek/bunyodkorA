@@ -2,7 +2,7 @@
 
 **Comprehensive Integrated Management System for Bunyodkor Football Academy**
 
-A professional FastAPI backend for managing students, payments, attendance, and turnstile access control.
+A professional FastAPI backend for managing students, attendance, contracts, and turnstile access control.
 
 ---
 
@@ -29,7 +29,7 @@ pip install -r requirements.txt
 3. **Configure environment**
 ```bash
 cp .env.example .env
-# Edit .env and set your DATABASE_URL and SECRET_KEY
+# Edit .env and set POSTGRES_*, SECRET_KEY, and Telegram settings if needed
 ```
 
 4. **Create database**
@@ -113,16 +113,13 @@ Bunyodkor_FastApi/
 - JWT authentication with RBAC
 - User & role management
 - Student, parent, group, contract CRUD
-- Transaction management (manual, Payme/Click placeholders)
-- Coach attendance marking with debt warnings (SOFT-BLOCK)
-- Turnstile integration with payment check (HARD-BLOCK)
-- Comprehensive reports (finance, attendance, debtors)
-- Public payment pages (no login)
+- Coach attendance management
+- Turnstile integration
+- Attendance-focused reports
 - System settings management
 - Excel import stub
 
 ### 🔜 To Implement
-- Real Payme/Click payment integration
 - SMS notifications
 - Excel import parsing
 - File uploads (student photos)
@@ -138,10 +135,9 @@ Visit `http://localhost:8000/docs` for interactive API testing via Swagger UI.
 **Test Flow**:
 1. Login with super admin credentials
 2. Create a student, group, contract
-3. Create a manual transaction
-4. Test gate callback with student ID
-5. Mark attendance as coach
-6. Check reports
+3. Test gate callback with student ID
+4. Mark attendance as coach
+5. Check reports
 
 ---
 
@@ -184,8 +180,6 @@ See [requirements.txt](./requirements.txt) for full list.
 - `/students` - Student CRUD
 - `/groups` - Group CRUD
 - `/contracts` - Contract CRUD
-- `/transactions` - Transaction management
-
 ### Coach
 - `/coach/groups` - Assigned groups
 - `/coach/sessions` - Training sessions
@@ -197,14 +191,7 @@ See [requirements.txt](./requirements.txt) for full list.
 
 ### Reports
 - `/reports/dashboard/summary` - Quick stats
-- `/reports/finance` - Revenue breakdown
 - `/reports/attendance/*` - Attendance analytics
-- `/reports/debtors` - Debt list
-
-### Public (No Auth)
-- `GET /public/contracts/{number}` - Contract info
-- `POST /public/payments/*` - Initiate payments
-- `POST /payments/callback/*` - Payment callbacks
 
 ---
 
@@ -233,9 +220,9 @@ See `.env.example` for all available variables.
 - `SECRET_KEY` - JWT signing key (generate with `openssl rand -hex 32`)
 
 **Optional**:
-- `PAYME_*` - Payme integration
-- `CLICK_*` - Click integration
 - `SMS_*` - SMS provider
+- `TELEGRAM_BACKUP_*` - backup bot token/chat id
+- `TELEGRAM_ERROR_*` - error alert bot token/chat id
 - `TIMEZONE` - Default: Asia/Tashkent
 - `CURRENCY` - Default: UZS
 

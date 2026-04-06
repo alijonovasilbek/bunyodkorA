@@ -48,8 +48,11 @@ class Settings(BaseSettings):
     # Telegram Bot Configuration
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID: str = ""
+    TELEGRAM_BACKUP_BOT_TOKEN: str = ""
+    TELEGRAM_BACKUP_CHAT_ID: str = ""
     TELEGRAM_STUDENT_BOT_TOKEN: str = ""
     TELEGRAM_ERROR_ALERTS_ENABLED: bool = True
+    TELEGRAM_ERROR_BOT_TOKEN: str = ""
     TELEGRAM_ERROR_CHAT_ID: str = ""
     BACKUP_ENABLED: bool = True
     BACKUP_HOUR: int = 3  # Hour of day to run backup (0-23, default 3 AM)
@@ -59,6 +62,22 @@ class Settings(BaseSettings):
 
     SWAGGER_USERNAME: str = ""
     SWAGGER_PASSWORD: str = ""
+
+    @property
+    def backup_telegram_bot_token(self) -> str:
+        return (self.TELEGRAM_BACKUP_BOT_TOKEN or self.TELEGRAM_BOT_TOKEN or "").strip()
+
+    @property
+    def backup_telegram_chat_id(self) -> str:
+        return (self.TELEGRAM_BACKUP_CHAT_ID or self.TELEGRAM_CHAT_ID or "").strip()
+
+    @property
+    def error_telegram_bot_token(self) -> str:
+        return (self.TELEGRAM_ERROR_BOT_TOKEN or self.TELEGRAM_BOT_TOKEN or "").strip()
+
+    @property
+    def error_telegram_chat_id(self) -> str:
+        return (self.TELEGRAM_ERROR_CHAT_ID or self.TELEGRAM_CHAT_ID or "").strip()
 
     class Config:
         env_file = ".env"

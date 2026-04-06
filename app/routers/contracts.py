@@ -1,6 +1,5 @@
 from typing import Annotated, Optional, List
-from datetime import datetime, date, timezone
-from decimal import Decimal
+from datetime import datetime, date
 import json
 import uuid
 import os
@@ -18,20 +17,16 @@ from app.core.db import get_db
 from app.core.permissions import PERM_CONTRACTS_VIEW, PERM_CONTRACTS_EDIT
 from app.core.s3 import upload_image_to_s3
 from app.models.domain import Contract, Student, Group, WaitingList
-from app.models.finance import Transaction
 from app.schemas.contract import (
     ContractRead, ContractUpdate, ContractTerminate,
     ContractCreateWithDocuments, ContractCreatedResponse,
     ContractNumberInfo, ContractCustomFields, ContractReadWithStudentName,
-    MonthlyFeeUpdate, ContractDatesUpdate, TerminatedStudentRead, TerminatedPaymentInfo,
-    TerminatedUnpaidReportRow
+    MonthlyFeeUpdate, ContractDatesUpdate, TerminatedStudentRead
 )
-from app.schemas.transaction import ContractPaymentStatus, PaidMonth, UnpaidMonth
 from app.schemas.common import DataResponse, PaginationMeta
 from app.deps import require_permission, CurrentUser
 from app.models.auth import User
-from app.models.enums import ContractStatus, PaymentStatus, StudentStatus, PaymentSettlementType
-from app.services.transaction_reporting import normalize_unique_months
+from app.models.enums import ContractStatus, StudentStatus
 from app.services.contract_allocation import (
     get_available_contract_numbers,
     is_group_full,
@@ -80,36 +75,6 @@ def _extract_original_contract_number(contract_number: str) -> str:
     return contract_number
 
 
-def _normalize_sort_datetime(value: datetime | None) -> datetime:
-    """
-    Normalize datetime values to UTC-aware for safe sorting.
-    Prevents errors when naive and timezone-aware values are mixed.
-    """
-    if value is None:
-        return datetime(1970, 1, 1, tzinfo=timezone.utc)
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
-def _iter_months(start_date: date, end_date: date) -> list[tuple[int, int]]:
-    months: list[tuple[int, int]] = []
-    current = date(start_date.year, start_date.month, 1)
-    end_month = date(end_date.year, end_date.month, 1)
-
-    while current <= end_month:
-        months.append((current.year, current.month))
-        if current.month == 12:
-            current = date(current.year + 1, 1, 1)
-        else:
-            current = date(current.year, current.month + 1, 1)
-    return months
-
-
-def _month_label(year: int, month: int) -> str:
-    return f"{year}-{month:02d}"
-
-
 def _resolve_terminated_by_full_name(terminated_by: User | None) -> str | None:
     if not terminated_by:
         return None
@@ -120,75 +85,6 @@ def _resolve_terminated_by_full_name(terminated_by: User | None) -> str | None:
     last_name = getattr(terminated_by, "last_name", "")
     fallback_name = f"{first_name} {last_name}".strip()
     return fallback_name or None
-
-
-def _build_terminated_unpaid_row(contract: Contract) -> TerminatedUnpaidReportRow:
-    student = contract.student
-    contract_group = contract.group
-    student_current_group = student.group if student else None
-    terminated_by_full_name = _resolve_terminated_by_full_name(contract.terminated_by)
-
-    effective_end_date = contract.end_date
-    if contract.terminated_at:
-        termination_date = contract.terminated_at.date()
-        if termination_date < effective_end_date:
-            effective_end_date = termination_date
-
-    contract_months = _iter_months(contract.start_date, effective_end_date)
-    contract_months_set = set(contract_months)
-
-    paid_months_set: set[tuple[int, int]] = set()
-    for transaction in contract.transactions:
-        if transaction.status != PaymentStatus.SUCCESS or transaction.payment_year is None:
-            continue
-        for raw_month in (transaction.payment_months or []):
-            try:
-                month_number = int(raw_month)
-            except (TypeError, ValueError):
-                continue
-            if not 1 <= month_number <= 12:
-                continue
-            key = (int(transaction.payment_year), month_number)
-            if key in contract_months_set:
-                paid_months_set.add(key)
-
-    paid_months = sorted(paid_months_set)
-    unpaid_months = [m for m in contract_months if m not in paid_months_set]
-    monthly_fee = float(contract.monthly_fee)
-    total_expected = monthly_fee * len(contract_months)
-    total_paid = monthly_fee * len(paid_months)
-    debt_amount = max(total_expected - total_paid, 0.0)
-
-    return TerminatedUnpaidReportRow(
-        contract_id=contract.id,
-        contract_number=contract.contract_number,
-        original_contract_number=_extract_original_contract_number(contract.contract_number),
-        student_id=student.id if student else contract.student_id,
-        student_first_name=student.first_name if student else "",
-        student_last_name=student.last_name if student else "",
-        student_phone=student.phone if student else None,
-        contract_group_id=contract_group.id if contract_group else contract.group_id,
-        contract_group_name=contract_group.name if contract_group else None,
-        contract_group_identifier=contract_group.identifier if contract_group else None,
-        current_student_group_id=student_current_group.id if student_current_group else (student.group_id if student else None),
-        current_student_group_name=student_current_group.name if student_current_group else None,
-        contract_start_date=contract.start_date,
-        contract_end_date=contract.end_date,
-        terminated_at=contract.terminated_at,
-        effective_end_date=effective_end_date,
-        terminated_by_user_id=contract.terminated_by_user_id,
-        terminated_by_full_name=terminated_by_full_name,
-        termination_reason=contract.termination_reason,
-        monthly_fee=monthly_fee,
-        paid_months=[_month_label(y, m) for y, m in paid_months],
-        unpaid_months=[_month_label(y, m) for y, m in unpaid_months],
-        expected_months_count=len(contract_months),
-        paid_months_count=len(paid_months),
-        unpaid_months_count=len(unpaid_months),
-        total_expected=total_expected,
-        total_paid=total_paid,
-        debt_amount=debt_amount,
-    )
 
 
 def _build_terminated_contract_filters(
@@ -457,7 +353,7 @@ async def get_terminated_students(
     page_size: int = Query(20, ge=1, le=2000),
 ):
     """
-    Get terminated students with full contract + student + payment information.
+    Get terminated students with full contract and student information.
     """
     if archive_year is None:
         archive_year = datetime.now().year
@@ -480,7 +376,6 @@ async def get_terminated_students(
             selectinload(Contract.student),
             selectinload(Contract.group),
             selectinload(Contract.terminated_by),
-            selectinload(Contract.transactions),
         )
         .where(and_(*filters))
         .order_by(Contract.terminated_at.desc().nullslast(), Contract.created_at.desc())
@@ -502,28 +397,6 @@ async def get_terminated_students(
         student = contract.student
         group = contract.group
         terminated_by = contract.terminated_by
-
-        success_transactions = [
-            tx for tx in contract.transactions
-            if tx.status == PaymentStatus.SUCCESS
-        ]
-        success_transactions.sort(
-            key=lambda tx: _normalize_sort_datetime(tx.paid_at or tx.created_at),
-            reverse=True,
-        )
-
-        payment_items = [
-            TerminatedPaymentInfo(
-                transaction_id=tx.id,
-                amount=float(tx.amount),
-                source=tx.source,
-                paid_at=tx.paid_at,
-                payment_year=tx.payment_year,
-                payment_months=tx.payment_months,
-            )
-            for tx in success_transactions
-        ]
-
         terminated_by_full_name = _resolve_terminated_by_full_name(terminated_by)
 
         data.append(
@@ -538,6 +411,9 @@ async def get_terminated_students(
                 student_id=student.id if student else contract.student_id,
                 student_first_name=student.first_name if student else "",
                 student_last_name=student.last_name if student else "",
+                student_height=student.height if student else 0,
+                student_weight=student.weight if student else 0,
+                student_pnfl=student.pnfl if student else "",
                 student_phone=student.phone if student else None,
                 student_group_id=student.group_id if student else contract.group_id,
                 student_group_name=group.name if group else None,
@@ -546,9 +422,6 @@ async def get_terminated_students(
                 termination_reason=contract.termination_reason,
                 terminated_by_user_id=contract.terminated_by_user_id,
                 terminated_by_full_name=terminated_by_full_name,
-                successful_payments_count=len(payment_items),
-                successful_payments_total=sum(payment.amount for payment in payment_items),
-                successful_payments=payment_items,
             )
         )
 
@@ -563,6 +436,7 @@ async def get_terminated_students(
     )
 
 
+'''
 @router.get(
     "/terminated-unpaid-report",
     response_model=DataResponse[list[TerminatedUnpaidReportRow]],
@@ -781,6 +655,8 @@ async def export_terminated_unpaid_report(
         headers={"Content-Disposition": content_disposition},
     )
 
+
+'''
 
 @router.get("/{contract_id}", response_model=DataResponse[ContractRead], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
 async def get_contract(
@@ -1066,6 +942,7 @@ async def update_contract_pdf(
     })
 
 
+'''
 @router.get("/payment-months/{contract_number}", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
 async def get_contract_payment_months(
     contract_number: str,
@@ -1123,6 +1000,8 @@ async def get_contract_payment_months(
         "total_months": len(payment_months)
     })
 
+
+'''
 
 @router.delete("/{contract_id}", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_CONTRACTS_EDIT))])
 async def delete_contract(
@@ -1577,6 +1456,7 @@ async def get_contract_pdf_url(
     return JSONResponse(content={"pdf_url": contract.final_pdf_url})
 
 
+'''
 @router.get("/{contract_number}/payment-status", response_model=DataResponse[ContractPaymentStatus], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
 async def get_contract_payment_status(
     contract_number: str,
@@ -1764,6 +1644,8 @@ async def get_contract_payment_status(
     ))
 
 
+'''
+
 @router.get("/{year}/{contract_number}/student-data", dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
 async def get_contract_student_data(
     year: int,
@@ -1830,6 +1712,9 @@ async def get_contract_student_data(
             "first_name": student.first_name,
             "last_name": student.last_name,
             "date_of_birth": student.date_of_birth.isoformat(),
+            "height": student.height,
+            "weight": student.weight,
+            "pnfl": student.pnfl,
             "phone": student.phone,
             "address": student.address,
             "photo_url": student.photo_url,

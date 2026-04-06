@@ -12,11 +12,10 @@ from app.models.attendance import Session, Attendance
 from app.schemas.group import GroupRead
 from app.schemas.attendance import (
     SessionRead, SessionCreate, AttendanceCreate, SessionWithAttendances,
-    StudentWithDebtInfo, BulkAttendanceCreate, AttendanceStats, AttendanceRead, DebtMonthInfo
+    BulkAttendanceCreate, AttendanceStats, AttendanceRead
 )
 from app.schemas.common import DataResponse
 from app.deps import require_permission, CurrentUser
-from app.services.debt import calculate_student_previous_months_debt
 from app.services.file_upload import file_upload_service
 
 router = APIRouter(prefix="/coach", tags=["Coach"])
@@ -65,48 +64,6 @@ async def get_coach_sessions(
     result = await db.execute(query)
     sessions = result.scalars().all()
     return DataResponse(data=[SessionRead.model_validate(s) for s in sessions])
-
-
-@router.get("/sessions/{session_id}/students-with-debt-info", response_model=DataResponse[list[StudentWithDebtInfo]], dependencies=[Depends(require_permission(PERM_ATTENDANCE_COACH_MARK))])
-async def get_session_students_with_debt(
-    session_id: int,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    session_result = await db.execute(select(Session).where(Session.id == session_id))
-    session = session_result.scalar_one_or_none()
-
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    students_result = await db.execute(select(Student).where(Student.group_id == session.group_id))
-    students = students_result.scalars().all()
-
-    students_with_debt = []
-    for student in students:
-        debt, overdue_months = await calculate_student_previous_months_debt(db, student.id)
-        has_debt = debt > 0
-        overdue_month_models = [
-            DebtMonthInfo(year=year, month=month, amount=amount)
-            for year, month, amount in overdue_months
-        ]
-        debt_warning = None
-        if has_debt:
-            months_text = ", ".join(f"{year}-{month:02d}" for year, month, _ in overdue_months)
-            debt_warning = f"Student owes {debt} UZS for months: {months_text}"
-
-        students_with_debt.append(
-            StudentWithDebtInfo(
-                student_id=student.id,
-                first_name=student.first_name,
-                last_name=student.last_name,
-                has_debt=has_debt,
-                debt_amount=debt,
-                debt_warning=debt_warning,
-                overdue_months=overdue_month_models,
-            )
-        )
-
-    return DataResponse(data=students_with_debt)
 
 
 @router.post("/sessions/{session_id}/attendance", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_ATTENDANCE_COACH_MARK))])

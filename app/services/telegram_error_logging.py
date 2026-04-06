@@ -91,8 +91,8 @@ def setup_telegram_error_logging() -> bool:
     if not settings.TELEGRAM_ERROR_ALERTS_ENABLED:
         return False
 
-    bot_token = (settings.TELEGRAM_BOT_TOKEN or "").strip()
-    chat_id = (settings.TELEGRAM_ERROR_CHAT_ID or settings.TELEGRAM_CHAT_ID or "").strip()
+    bot_token = settings.error_telegram_bot_token
+    chat_id = settings.error_telegram_chat_id
     if not bot_token or not chat_id:
         return False
 
