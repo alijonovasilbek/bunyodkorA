@@ -1,12 +1,5 @@
-PERM_FINANCE_TRANSACTIONS_VIEW = "finance:transactions:view"
-PERM_FINANCE_UNASSIGNED_VIEW = "finance:unassigned:view"
-PERM_FINANCE_UNASSIGNED_ASSIGN = "finance:unassigned:assign"
-PERM_FINANCE_TRANSACTIONS_MANUAL = "finance:transactions:manual"
-PERM_FINANCE_TRANSACTIONS_CANCEL = "finance:transactions:cancel"
-
 PERM_STUDENTS_VIEW = "students:view"
 PERM_STUDENTS_EDIT = "students:edit"
-PERM_STUDENTS_MANAGE = "students:manage"
 
 PERM_GROUPS_VIEW = "groups:view"
 PERM_GROUPS_EDIT = "groups:edit"
@@ -20,7 +13,6 @@ PERM_ATTENDANCE_VIEW = "attendance:view"
 PERM_SESSIONS_CREATE = "sessions:create"
 PERM_SESSIONS_MANAGE = "sessions:manage"
 
-PERM_REPORTS_FINANCE_VIEW = "reports:finance:view"
 PERM_REPORTS_ATTENDANCE_VIEW = "reports:attendance:view"
 PERM_REPORTS_DASHBOARD_VIEW = "reports:dashboard:view"
 
@@ -33,14 +25,8 @@ PERM_USERS_MANAGE = "users:manage"
 PERM_GATE_LOGS_VIEW = "gate:logs:view"
 
 ALL_PERMISSIONS = [
-    {"code": PERM_FINANCE_TRANSACTIONS_VIEW, "description": "View financial transactions"},
-    {"code": PERM_FINANCE_UNASSIGNED_VIEW, "description": "View unassigned transactions"},
-    {"code": PERM_FINANCE_UNASSIGNED_ASSIGN, "description": "Assign unassigned transactions"},
-    {"code": PERM_FINANCE_TRANSACTIONS_MANUAL, "description": "Create manual transactions"},
-    {"code": PERM_FINANCE_TRANSACTIONS_CANCEL, "description": "Cancel transactions"},
     {"code": PERM_STUDENTS_VIEW, "description": "View students"},
     {"code": PERM_STUDENTS_EDIT, "description": "Edit students"},
-    {"code": PERM_STUDENTS_MANAGE, "description": "Full student management including import"},
     {"code": PERM_GROUPS_VIEW, "description": "View groups"},
     {"code": PERM_GROUPS_EDIT, "description": "Edit groups"},
     {"code": PERM_CONTRACTS_VIEW, "description": "View contracts"},
@@ -49,7 +35,6 @@ ALL_PERMISSIONS = [
     {"code": PERM_ATTENDANCE_VIEW, "description": "View attendance records"},
     {"code": PERM_SESSIONS_CREATE, "description": "Create training sessions"},
     {"code": PERM_SESSIONS_MANAGE, "description": "Manage all training sessions"},
-    {"code": PERM_REPORTS_FINANCE_VIEW, "description": "View financial reports"},
     {"code": PERM_REPORTS_ATTENDANCE_VIEW, "description": "View attendance reports"},
     {"code": PERM_REPORTS_DASHBOARD_VIEW, "description": "View dashboard"},
     {"code": PERM_SETTINGS_SYSTEM_EDIT, "description": "Edit system settings"},
@@ -67,13 +52,10 @@ DEFAULT_ROLES = {
     "Director": {
         "description": "Director with access to all reports and management",
         "permissions": [
-            PERM_FINANCE_TRANSACTIONS_VIEW,
-            PERM_FINANCE_UNASSIGNED_VIEW,
             PERM_STUDENTS_VIEW,
             PERM_GROUPS_VIEW,
             PERM_CONTRACTS_VIEW,
             PERM_ATTENDANCE_VIEW,
-            PERM_REPORTS_FINANCE_VIEW,
             PERM_REPORTS_ATTENDANCE_VIEW,
             PERM_REPORTS_DASHBOARD_VIEW,
             PERM_GATE_LOGS_VIEW,
@@ -81,16 +63,10 @@ DEFAULT_ROLES = {
         ],
     },
     "Accountant": {
-        "description": "Financial management and transactions",
+        "description": "Financial management",
         "permissions": [
-            PERM_FINANCE_TRANSACTIONS_VIEW,
-            PERM_FINANCE_UNASSIGNED_VIEW,
-            PERM_FINANCE_UNASSIGNED_ASSIGN,
-            PERM_FINANCE_TRANSACTIONS_MANUAL,
-            PERM_FINANCE_TRANSACTIONS_CANCEL,
             PERM_STUDENTS_VIEW,
             PERM_CONTRACTS_VIEW,
-            PERM_REPORTS_FINANCE_VIEW,
             PERM_REPORTS_DASHBOARD_VIEW,
         ],
     },
@@ -121,7 +97,6 @@ DEFAULT_ROLES = {
         "permissions": [
             PERM_STUDENTS_VIEW,
             PERM_STUDENTS_EDIT,
-            PERM_STUDENTS_MANAGE,
             PERM_GROUPS_VIEW,
             PERM_GROUPS_EDIT,
             PERM_CONTRACTS_VIEW,

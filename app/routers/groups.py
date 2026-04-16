@@ -769,7 +769,6 @@ async def export_group_students(
         'Contract Number',
         'First Name',
         'Last Name',
-        'Monthly Fee',
         'Start Date',
         'End Date'
     ]
@@ -789,16 +788,12 @@ async def export_group_students(
         sheet.cell(row=row_num, column=1).value = contract_number
         sheet.cell(row=row_num, column=2).value = student.first_name
         sheet.cell(row=row_num, column=3).value = student.last_name
-        sheet.cell(row=row_num, column=4).value = float(contract.monthly_fee)
-        sheet.cell(row=row_num, column=5).value = contract.start_date
-        sheet.cell(row=row_num, column=6).value = contract.end_date
+        sheet.cell(row=row_num, column=4).value = contract.start_date
+        sheet.cell(row=row_num, column=5).value = contract.end_date
 
         # Format dates
+        sheet.cell(row=row_num, column=4).number_format = 'DD.MM.YYYY'
         sheet.cell(row=row_num, column=5).number_format = 'DD.MM.YYYY'
-        sheet.cell(row=row_num, column=6).number_format = 'DD.MM.YYYY'
-
-        # Format currency
-        sheet.cell(row=row_num, column=4).number_format = '#,##0'
 
     # Save to temporary file
     temp_dir = tempfile.gettempdir()

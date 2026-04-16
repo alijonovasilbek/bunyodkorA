@@ -23,16 +23,13 @@ class StudentWithContractCreate(BaseModel):
     date_of_birth: date
     height: int
     weight: int
+    ampula: Optional[str] = Field(default=None, max_length=255)
     pnfl: str = Field(min_length=14, max_length=14)
     gender: str = Field(pattern="^(male|female)$")
     phone: Optional[str] = Field(default=None, max_length=20)
     email: Optional[str] = Field(default=None, max_length=255)
     address: Optional[str] = None
     status: StudentStatus = StudentStatus.ACTIVE
-
-    # Parent info
-    parent_name: Optional[str] = Field(default=None, max_length=255)
-    parent_phone: Optional[str] = Field(default=None, max_length=20)
 
     # Group selection
     group_id: int

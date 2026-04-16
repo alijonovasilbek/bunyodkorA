@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from sqlalchemy import String, Date, DateTime, Integer, Numeric, Text, Enum as SAEnum, ForeignKey
+from sqlalchemy import String, Date, DateTime, Integer, Text, Enum as SAEnum, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.db import Base
 from app.models.base import TimestampMixin
@@ -15,6 +15,7 @@ class Student(Base, TimestampMixin):
     date_of_birth: Mapped[date] = mapped_column(Date, nullable=False)
     height: Mapped[int] = mapped_column(Integer, nullable=False)
     weight: Mapped[int] = mapped_column(Integer, nullable=False)
+    ampula: Mapped[str | None] = mapped_column(String(255), nullable=True)
     pnfl: Mapped[str] = mapped_column(String(14), unique=True, index=True, nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -30,25 +31,9 @@ class Student(Base, TimestampMixin):
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
 
     group: Mapped["Group"] = relationship("Group", back_populates="students")
-    parents: Mapped[list["Parent"]] = relationship("Parent", back_populates="student", cascade="all, delete-orphan")
     contracts: Mapped[list["Contract"]] = relationship("Contract", back_populates="student", cascade="all, delete-orphan")
     attendances: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="student", cascade="all, delete-orphan")
     gate_logs: Mapped[list["GateLog"]] = relationship("GateLog", back_populates="student", cascade="all, delete-orphan")
-
-
-class Parent(Base, TimestampMixin):
-    __tablename__ = "parents"
-
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    first_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    last_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    phone: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
-    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    relationship_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
-
-    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
-
-    student: Mapped["Student"] = relationship("Student", back_populates="parents")
 
 
 class Group(Base, TimestampMixin):
@@ -87,7 +72,6 @@ class Contract(Base, TimestampMixin):
     contract_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
-    monthly_fee: Mapped[int] = mapped_column(Numeric(15, 2), nullable=False)
     status: Mapped[ContractStatus] = mapped_column(
         SAEnum(ContractStatus, native_enum=False, length=20), default=ContractStatus.ACTIVE, nullable=False
     )

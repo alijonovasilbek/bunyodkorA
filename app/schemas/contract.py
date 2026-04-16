@@ -55,7 +55,6 @@ class ContractTermsInfo(BaseModel):
     """Contract terms from contract pages (Image 3)"""
     contract_start_date: date = Field(description="Contract validity start date")
     contract_end_date: date = Field(description="Contract validity end date")
-    monthly_fee: float = Field(description="Monthly subscription fee amount")
 
 
 class CustomerInfo(BaseModel):
@@ -93,7 +92,6 @@ class ContractRead(BaseModel):
     contract_number: str
     start_date: date
     end_date: date
-    monthly_fee: float
     status: ContractStatus
     student_id: int
     group_id: Optional[int] = None
@@ -148,7 +146,6 @@ class ContractUpdate(BaseModel):
     """Update contract fields"""
     start_date: Optional[date] = None
     end_date: Optional[date] = None
-    monthly_fee: Optional[float] = None
     status: Optional[ContractStatus] = None
     custom_fields: Optional[ContractCustomFields] = None
 
@@ -156,11 +153,6 @@ class ContractUpdate(BaseModel):
 class ContractTerminate(BaseModel):
     termination_reason: str
     terminated_at: Optional[datetime] = None
-
-
-class MonthlyFeeUpdate(BaseModel):
-    """Update contract monthly fee"""
-    monthly_fee: float = Field(gt=0, description="New monthly fee amount (must be greater than 0)")
 
 
 class ContractDatesUpdate(BaseModel):
@@ -214,7 +206,6 @@ class ContractReadWithStudentName(BaseModel):
     contract_number: str
     start_date: date
     end_date: date
-    monthly_fee: float
     status: ContractStatus
     student_full_name: str  # Instead of student_id
     group_id: Optional[int] = None
@@ -252,7 +243,6 @@ class TerminatedStudentRead(BaseModel):
     original_contract_number: Optional[str] = None
     start_date: date
     end_date: date
-    monthly_fee: float
     contract_status: ContractStatus
 
     student_id: int

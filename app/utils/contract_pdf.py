@@ -176,6 +176,7 @@ class ContractPDFGenerator:
         )
         self.doc.width = A4[0] - self.doc.leftMargin - self.doc.rightMargin
         self.logo_filename = "Bunyodkor-new.png"
+        self.render_text_content = bool(self.data.get("render_text_content", False))
 
     def _add_underlined_multiline_text(self, text, style, line_width=0.5):
         from reportlab.pdfbase.pdfmetrics import stringWidth
@@ -285,10 +286,6 @@ class ContractPDFGenerator:
                 "tugash": "«31» Декабр",
                 "yil": "2025"
             },
-            "tolov": {
-                "oylik_narx": "600 000",
-                "oylik_narx_sozlar": "олти юз минг"
-            }
         }
 
     def _add_underlined_field(self, label, value="", line_length=80, after_space=3):
@@ -746,6 +743,10 @@ class ContractPDFGenerator:
 
     def get_flowables(self):
         """Barcha PDF elementlarini (Flowables) tayyorlash"""
+        self.story = []
+
+        if not self.render_text_content:
+            return self.story
 
         self._add_ariza_page()
 
@@ -832,20 +833,14 @@ class ContractPDFGenerator:
         ]
         self._add_section("5", "Форс-мажор", section5, is_list=False)
 
-        tolov = self.data.get('tolov', {})
-
-        narx = tolov.get('oylik_narx', '600 000')
-        narx_sozlar = tolov.get('oylik_narx_sozlar', 'олти юз минг')
-
-        narx_html = f"<u><b>{narx}</b></u>"
-        narx_sozlar_html = f"<u><b>{narx_sozlar}</b></u>"
+        narx_html = "<u><b>___</b></u>"
 
         section6 = [
-            f"<b>6.1.</b> Абонементнинг ойлик тўлов нархи ҚҚСсиз {narx_html} ({narx_sozlar_html}) сўмни ташкил қилади.",
+            f"<b>6.1.</b> Абонементнинг ойлик тўлов нархи ҚҚСсиз {narx_html} сўмни ташкил қилади.",
 
             """<b>6.2.</b> Ушбу шартнома бўйича тўлов спорт-машғулот бошланишига қадар 100% миқдорида ҳар ойнинг 1 (биринчи) санасидан 10 (ўнинчи) санасига қадар пул кўчириш ёки пластик карта орқали клубга хизмат кўрсатадиган банкдаги ҳисоб рақамига ўтказган ҳолда амалга оширилади. Мазкур бандда келтирилган тартибда тўловлар амалга оширилганда тўлов топшириқномаларини тўғри тўлдириш ва Ижрочига ўз вақтида топшириш Буюртмачи зиммасига юклатилади. Тўғри тўлдирилмаган ёки Ижрочига ўз вақтида топширилмаган тўлов топшириқномалари бўйича тўловлар Буюртмачи томонидан мазкур шартноманинг рўйхатга олинган рақами бўйича қабул қилинади.""",
 
-            f"""<b>6.3.</b> Ота-оналар бир марталик {narx_html} ({narx_sozlar_html}) сўмни олдиндан тўловини амалга оширадилар, ушбу тўлов тарбияланувчининг ўқишга келишини ва ота-оналарнинг тўловларни мунтазам (ўз вақтида) амалга ошириш ниятларининг кафолатидир. Ушбу тўлов орқали шартноманинг сўнги ойи тўлови ёпилади. Агар Буюртмачи шартномани муддатидан аввал сабабсиз бекор қилса, ушбу тўлов қайтарилмайди. Ушбу тўлов ота-оналар академия раҳбариятига ариза ёзиб, асосли ҳужжатларни (соғлиғи, яшаш жойи ўзгариши) тақдим этганда қайтарилиши мумкин."""
+            f"""<b>6.3.</b> Ота-оналар бир марталик {narx_html} сўмни олдиндан тўловини амалга оширадилар, ушбу тўлов тарбияланувчининг ўқишга келишини ва ота-оналарнинг тўловларни мунтазам (ўз вақтида) амалга ошириш ниятларининг кафолатидир. Ушбу тўлов орқали шартноманинг сўнги ойи тўлови ёпилади. Агар Буюртмачи шартномани муддатидан аввал сабабсиз бекор қилса, ушбу тўлов қайтарилмайди. Ушбу тўлов ота-оналар академия раҳбариятига ариза ёзиб, асосли ҳужжатларни (соғлиғи, яшаш жойи ўзгариши) тақдим этганда қайтарилиши мумкин."""
         ]
 
         self._add_section("6", "Тўлов қилиш тартиби", section6, is_list=True)
@@ -910,13 +905,18 @@ class ContractPDFGenerator:
         A4_WIDTH = A4[0]  # 595.27 points
         A4_HEIGHT = A4[1]  # 841.89 points
 
-        print(f"[INFO] {len(pdf_urls)} ta PDF faylni birlashtirish (A4 razmeriga)...")
+        valid_pdf_urls = [url for url in pdf_urls if url]
+        if not valid_pdf_urls:
+            print("[INFO] Birlashtirish uchun attachment yo'q")
+            return None
+
+        print(f"[INFO] {len(valid_pdf_urls)} ta PDF faylni birlashtirish (A4 razmeriga)...")
 
         # Download all PDFs synchronously
         def download_all_pdfs_sync():
             """Download all PDF files synchronously"""
             results = []
-            for url in pdf_urls:
+            for url in valid_pdf_urls:
                 try:
                     if url.startswith(('http://', 'https://')):
                         # Download from S3
@@ -945,16 +945,17 @@ class ContractPDFGenerator:
         # Create writer for final PDF
         writer = PdfWriter()
 
-        # Add base PDF pages first
-        try:
-            with open(base_pdf, 'rb') as f:
-                reader = PdfReader(f)
-                for page in reader.pages:
-                    writer.add_page(page)
-            print(f"[OK] Asosiy shartnoma PDF qo'shildi ({len(reader.pages)} sahifa)")
-        except Exception as e:
-            print(f"!!! Asosiy PDF xato: {e}")
-            raise
+        # Add base PDF pages first when it exists
+        if base_pdf and os.path.exists(base_pdf):
+            try:
+                with open(base_pdf, 'rb') as f:
+                    reader = PdfReader(f)
+                    for page in reader.pages:
+                        writer.add_page(page)
+                print(f"[OK] Asosiy shartnoma PDF qo'shildi ({len(reader.pages)} sahifa)")
+            except Exception as e:
+                print(f"!!! Asosiy PDF xato: {e}")
+                raise
 
         temp_files_to_delete = []
         merged_count = 0
@@ -1039,6 +1040,8 @@ class ContractPDFGenerator:
             except Exception:
                 pass
 
+        return output_pdf
+
 
     def generate(self, output_file):
 
@@ -1047,9 +1050,6 @@ class ContractPDFGenerator:
 
         """PDF faylni yaratish"""
         try:
-            self.doc.filename = output_file
-            self.doc.build(self.get_flowables())
-            print(f"[OK] Шартнома муваффақиятли яратилди: {output_file}")
             image_urls = []
             data = self.data
 
@@ -1105,13 +1105,25 @@ class ContractPDFGenerator:
             if len(contract_imgs_list) > 4 and contract_imgs_list[4]:
                 image_urls.append(contract_imgs_list[4])
 
+            flowables = self.get_flowables()
+            base_pdf_path = None
+
+            if flowables:
+                self.doc.filename = output_file
+                self.doc.build(flowables)
+                base_pdf_path = output_file
+                print(f"[OK] Asosiy matnli PDF yaratildi: {output_file}")
+
             if image_urls:
                 print(f"[INFO] {len(image_urls)} ta ilova fayl PDFga qo'shilmoqda...")
-                merged_output = output_file.replace(".pdf", "_full.pdf")
-                self.add_attachments_to_pdf(output_file, image_urls, merged_output)
-                return merged_output
+                merged_output = output_file if base_pdf_path is None else output_file.replace(".pdf", "_full.pdf")
+                return self.add_attachments_to_pdf(base_pdf_path, image_urls, merged_output)
 
-            return output_file
+            if base_pdf_path:
+                return base_pdf_path
+
+            print("[INFO] Na matnli sahifa, na attachment yuborilgan. PDF generatsiya qilinmadi.")
+            return None
 
         except Exception as e:
             print(f"!!! PDF yaratishda xato yuz berdi: {e}")

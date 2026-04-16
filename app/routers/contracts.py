@@ -21,7 +21,7 @@ from app.schemas.contract import (
     ContractRead, ContractUpdate, ContractTerminate,
     ContractCreateWithDocuments, ContractCreatedResponse,
     ContractNumberInfo, ContractCustomFields, ContractReadWithStudentName,
-    MonthlyFeeUpdate, ContractDatesUpdate, TerminatedStudentRead
+    ContractDatesUpdate, TerminatedStudentRead
 )
 from app.schemas.common import DataResponse, PaginationMeta
 from app.deps import require_permission, CurrentUser
@@ -281,7 +281,6 @@ async def get_contracts_with_student_name(
             "contract_number": contract.contract_number,
             "start_date": contract.start_date,
             "end_date": contract.end_date,
-            "monthly_fee": contract.monthly_fee,
             "status": contract.status,
             "student_full_name": f"{student.first_name} {student.last_name}",
             "group_id": contract.group_id,
@@ -406,7 +405,6 @@ async def get_terminated_students(
                 original_contract_number=_extract_original_contract_number(contract.contract_number),
                 start_date=contract.start_date,
                 end_date=contract.end_date,
-                monthly_fee=float(contract.monthly_fee),
                 contract_status=contract.status,
                 student_id=student.id if student else contract.student_id,
                 student_first_name=student.first_name if student else "",
@@ -570,7 +568,6 @@ async def export_terminated_unpaid_report(
         "Terminated At",
         "Terminated By",
         "Termination Reason",
-        "Monthly Fee",
         "Paid Months",
         "Unpaid Months",
         "Expected Months",
@@ -606,15 +603,14 @@ async def export_terminated_unpaid_report(
         ws.cell(row=row_num, column=12, value=row.terminated_at.isoformat() if row.terminated_at else "")
         ws.cell(row=row_num, column=13, value=row.terminated_by_full_name or "")
         ws.cell(row=row_num, column=14, value=row.termination_reason or "")
-        ws.cell(row=row_num, column=15, value=row.monthly_fee)
-        ws.cell(row=row_num, column=16, value=", ".join(row.paid_months) if row.paid_months else "")
-        ws.cell(row=row_num, column=17, value=", ".join(row.unpaid_months) if row.unpaid_months else "")
-        ws.cell(row=row_num, column=18, value=row.expected_months_count)
-        ws.cell(row=row_num, column=19, value=row.paid_months_count)
-        ws.cell(row=row_num, column=20, value=row.unpaid_months_count)
-        ws.cell(row=row_num, column=21, value=row.total_expected)
-        ws.cell(row=row_num, column=22, value=row.total_paid)
-        ws.cell(row=row_num, column=23, value=row.debt_amount)
+        ws.cell(row=row_num, column=15, value=", ".join(row.paid_months) if row.paid_months else "")
+        ws.cell(row=row_num, column=16, value=", ".join(row.unpaid_months) if row.unpaid_months else "")
+        ws.cell(row=row_num, column=17, value=row.expected_months_count)
+        ws.cell(row=row_num, column=18, value=row.paid_months_count)
+        ws.cell(row=row_num, column=19, value=row.unpaid_months_count)
+        ws.cell(row=row_num, column=20, value=row.total_expected)
+        ws.cell(row=row_num, column=21, value=row.total_paid)
+        ws.cell(row=row_num, column=22, value=row.debt_amount)
 
     for column_cells in ws.columns:
         max_length = 0
@@ -776,44 +772,6 @@ async def update_contract_dates(
 
     await db.commit()
     await db.refresh(contract)
-    return DataResponse(data=ContractRead.model_validate(contract))
-
-
-@router.patch("/{contract_id}/monthly-fee", response_model=DataResponse[ContractRead], dependencies=[Depends(require_permission(PERM_CONTRACTS_EDIT))])
-async def update_contract_monthly_fee(
-    contract_id: int,
-    data: MonthlyFeeUpdate,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    """
-    Update only the monthly fee for a contract.
-
-    This endpoint allows updating the monthly_fee field without modifying other contract details.
-
-    Args:
-        contract_id: The ID of the contract to update
-        data: New monthly fee (must be greater than 0)
-
-    Returns:
-        Updated contract with new monthly fee
-
-    Example:
-        PATCH /contracts/123/monthly-fee
-        Body: {"monthly_fee": 750000.0}
-    """
-    # Find contract
-    result = await db.execute(select(Contract).where(Contract.id == contract_id))
-    contract = result.scalar_one_or_none()
-
-    if not contract:
-        raise HTTPException(status_code=404, detail="Contract not found")
-
-    # Update monthly fee
-    contract.monthly_fee = data.monthly_fee
-
-    await db.commit()
-    await db.refresh(contract)
-
     return DataResponse(data=ContractRead.model_validate(contract))
 
 
@@ -1177,7 +1135,6 @@ async def create_contract_with_file_upload(
         sequence_number=sequence_number,
         start_date=custom_fields.contract_terms.contract_start_date,
         end_date=custom_fields.contract_terms.contract_end_date,
-        monthly_fee=custom_fields.contract_terms.monthly_fee,
         status=ContractStatus.ACTIVE,
         student_id=student_id,
         group_id=group_id,
@@ -1226,10 +1183,6 @@ async def create_contract_with_file_upload(
                 "boshlanish": contract.start_date.strftime('«%d» %B'),
                 "tugash": contract.end_date.strftime('«%d» %B'),
                 "yil": str(contract.start_date.year)
-            },
-            "tolov": {
-                "oylik_narx": f"{contract.monthly_fee:,}".replace(",", " "),
-                "oylik_narx_sozlar": "sum"  # You can add number-to-words conversion here
             }
         }
 
@@ -1616,7 +1569,7 @@ async def get_contract_payment_status(
             unpaid_months.append(UnpaidMonth(
                 year=year,
                 month=month,
-                expected_amount=float(contract.monthly_fee)
+                expected_amount=0
             ))
 
     # Calculate totals
@@ -1627,14 +1580,13 @@ async def get_contract_payment_status(
         for pm in paid_months
         if pm.settlement_status == "waiver_spravka"
     )
-    total_expected = max(len(all_months) - waived_only_month_count, 0) * float(contract.monthly_fee)
+    total_expected = 0
 
     return DataResponse(data=ContractPaymentStatus(
         contract_number=contract.contract_number,
         student_name=f"{student.first_name} {student.last_name}",
         start_date=contract.start_date.isoformat(),
         end_date=effective_end_date.isoformat(),
-        monthly_fee=float(contract.monthly_fee),
         contract_status=contract.status.value,
         paid_months=paid_months,
         unpaid_months=unpaid_months,
@@ -1661,18 +1613,15 @@ async def get_contract_student_data(
 
     Returns:
     - Student personal information
-    - Parent information
     - Document photos (passport, form 086, etc.)
     - Old contract details
 
     Example:
         GET /contracts/2025/1-2020B1/student-data
     """
-    # Find contract with related student and parent data
+    # Find contract with related student data
     result = await db.execute(
-        select(Contract).options(
-            selectinload(Contract.student).selectinload(Student.parents)
-        ).where(
+        select(Contract).options(selectinload(Contract.student)).where(
             and_(
                 Contract.contract_number == contract_number,
                 Contract.archive_year == year
@@ -1714,28 +1663,17 @@ async def get_contract_student_data(
             "date_of_birth": student.date_of_birth.isoformat(),
             "height": student.height,
             "weight": student.weight,
+            "ampula": student.ampula,
             "pnfl": student.pnfl,
             "phone": student.phone,
             "address": student.address,
             "photo_url": student.photo_url,
             "status": student.status.value if student.status else None,
         },
-        "parents": [
-            {
-                "id": parent.id,
-                "first_name": parent.first_name,
-                "last_name": parent.last_name,
-                "phone": parent.phone,
-                "email": parent.email,
-                "relationship_type": parent.relationship_type
-            }
-            for parent in student.parents
-        ],
         "old_contract": {
             "contract_number": contract.contract_number,
             "start_date": contract.start_date.isoformat(),
             "end_date": contract.end_date.isoformat(),
-            "monthly_fee": float(contract.monthly_fee),
             "status": contract.status.value,
             "archive_year": contract.archive_year,
             "birth_year": contract.birth_year,

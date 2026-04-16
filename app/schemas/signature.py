@@ -15,7 +15,6 @@ class SignatureVerify(BaseModel):
     group_name: str
     start_date: str
     end_date: str
-    monthly_fee: float
     is_valid: bool
     is_already_signed: bool
     message: str

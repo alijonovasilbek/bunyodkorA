@@ -16,7 +16,7 @@ from app.core.permissions import PERM_STUDENTS_VIEW, PERM_STUDENTS_EDIT, PERM_AT
 from app.models.domain import Student, Contract
 from app.models.attendance import Attendance, GateLog, Session
 from app.models.enums import StudentStatus, ContractStatus
-from app.schemas.student import StudentRead, StudentCreate, StudentUpdate, StudentFullInfo, ParentRead
+from app.schemas.student import StudentRead, StudentCreate, StudentUpdate, StudentFullInfo
 from app.schemas.contract import ContractRead
 from app.schemas.attendance import AttendanceRead, GateLogRead
 from app.schemas.common import DataResponse, PaginationMeta
@@ -32,7 +32,7 @@ router = APIRouter(prefix="/students", tags=["Students"])
 @router.get("/search", response_model=DataResponse[list[StudentRead]], dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
 async def search_students(
     db: Annotated[AsyncSession, Depends(get_db)],
-    query: str = Query(..., description="Search by first name, last name, contract number, phone, or parent email"),
+    query: str = Query(..., description="Search by first name, last name, ampula, contract number, or phone"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=2000),
 ):
@@ -40,17 +40,18 @@ async def search_students(
     Comprehensive search for students by:
     - First name
     - Last name
+    - Ampula
     - Contract number
     - Phone number
-    - Parent email
     """
-    from app.models.domain import Contract, Parent
+    from app.models.domain import Contract
 
     # Search students by name or phone
     students_query = select(Student).where(
         or_(
             Student.first_name.ilike(f"%{query}%"),
             Student.last_name.ilike(f"%{query}%"),
+            Student.ampula.ilike(f"%{query}%"),
             Student.phone.ilike(f"%{query}%"),
         )
     ).distinct()
@@ -61,14 +62,7 @@ async def search_students(
     )
     student_ids_from_contracts = [row[0] for row in contracts_result.fetchall()]
 
-    # Search by parent email
-    parents_result = await db.execute(
-        select(Parent.student_id).where(Parent.email.ilike(f"%{query}%"))
-    )
-    student_ids_from_parents = [row[0] for row in parents_result.fetchall()]
-
-    # Combine all student IDs
-    all_student_ids = set(student_ids_from_contracts + student_ids_from_parents)
+    all_student_ids = set(student_ids_from_contracts)
 
     # If we found students via contracts or parents, add them to the query
     if all_student_ids:
@@ -76,6 +70,7 @@ async def search_students(
             or_(
                 Student.first_name.ilike(f"%{query}%"),
                 Student.last_name.ilike(f"%{query}%"),
+                Student.ampula.ilike(f"%{query}%"),
                 Student.phone.ilike(f"%{query}%"),
                 Student.id.in_(all_student_ids)
             )
@@ -91,6 +86,7 @@ async def search_students(
         or_(
             Student.first_name.ilike(f"%{query}%"),
             Student.last_name.ilike(f"%{query}%"),
+            Student.ampula.ilike(f"%{query}%"),
             Student.phone.ilike(f"%{query}%"),
             Student.id.in_(all_student_ids) if all_student_ids else False
         )
@@ -149,6 +145,7 @@ async def get_students(
             or_(
                 Student.first_name.ilike(f"%{search}%"),
                 Student.last_name.ilike(f"%{search}%"),
+                Student.ampula.ilike(f"%{search}%"),
             )
         )
     if group_id:
@@ -171,6 +168,7 @@ async def get_students(
             or_(
                 Student.first_name.ilike(f"%{search}%"),
                 Student.last_name.ilike(f"%{search}%"),
+                Student.ampula.ilike(f"%{search}%"),
             )
         )
     if group_id:
@@ -412,10 +410,9 @@ async def export_comprehensive_student_data(
 ):
     """
     Export comprehensive student data to Excel file including:
-    - Student information (name, phone, address, date of birth, status)
+    - Student information (name, ampula, phone, address, date of birth, status)
     - Contract details (number, start/end dates, monthly fee, status, termination info)
     - Group information
-    - Parent information
 
     Filters:
     - from_date: Include contracts overlapping this start date
@@ -429,7 +426,6 @@ async def export_comprehensive_student_data(
     # Build student query with filters
     students_query = select(Student).options(
         selectinload(Student.group),
-        selectinload(Student.parents),
         selectinload(Student.contracts)
     )
 
@@ -454,8 +450,6 @@ async def export_comprehensive_student_data(
     student_data_list = []
 
     for student in students:
-        parent_names = ", ".join([f"{p.first_name} {p.last_name}" for p in student.parents]) if student.parents else "N/A"
-        parent_phones = ", ".join([p.phone for p in student.parents]) if student.parents else "N/A"
         group_name = student.group.name if student.group else "N/A"
         contracts = list(student.contracts)
 
@@ -484,18 +478,16 @@ async def export_comprehensive_student_data(
                 "date_of_birth": student.date_of_birth.strftime("%Y-%m-%d"),
                 "height": student.height,
                 "weight": student.weight,
+                "ampula": student.ampula or "N/A",
                 "pnfl": student.pnfl,
                 "phone": student.phone or "N/A",
                 "address": student.address or "N/A",
                 "status": student.status.value,
                 "group": group_name,
-                "parent_names": parent_names,
-                "parent_phones": parent_phones,
                 "contract_number": "N/A",
                 "contract_start": "N/A",
                 "contract_end": "N/A",
                 "contract_status": "N/A",
-                "monthly_fee": 0,
                 "terminated_at": "N/A",
                 "termination_reason": "N/A",
             })
@@ -512,18 +504,16 @@ async def export_comprehensive_student_data(
                 "date_of_birth": student.date_of_birth.strftime("%Y-%m-%d"),
                 "height": student.height,
                 "weight": student.weight,
+                "ampula": student.ampula or "N/A",
                 "pnfl": student.pnfl,
                 "phone": student.phone or "N/A",
                 "address": student.address or "N/A",
                 "status": student.status.value,
                 "group": group_name,
-                "parent_names": parent_names,
-                "parent_phones": parent_phones,
                 "contract_number": contract.contract_number or "N/A",
                 "contract_start": contract.start_date.strftime("%Y-%m-%d"),
                 "contract_end": contract.end_date.strftime("%Y-%m-%d"),
                 "contract_status": contract.status.value,
-                "monthly_fee": float(contract.monthly_fee),
                 "terminated_at": terminated_at_str,
                 "termination_reason": termination_reason,
             })
@@ -546,18 +536,16 @@ async def export_comprehensive_student_data(
         "Date of Birth",
         "Height",
         "Weight",
+        "Ampula",
         "PNFL",
         "Phone",
         "Address",
         "Status",
         "Group",
-        "Parent Names",
-        "Parent Phones",
         "Contract Number",
         "Contract Start",
         "Contract End",
         "Contract Status",
-        "Monthly Fee",
         "Terminated At",
         "Termination Reason",
     ]
@@ -597,20 +585,18 @@ async def export_comprehensive_student_data(
         ws.cell(row=row_num, column=4, value=student_data["date_of_birth"])
         ws.cell(row=row_num, column=5, value=student_data["height"])
         ws.cell(row=row_num, column=6, value=student_data["weight"])
-        ws.cell(row=row_num, column=7, value=student_data["pnfl"])
-        ws.cell(row=row_num, column=8, value=student_data["phone"])
-        ws.cell(row=row_num, column=9, value=student_data["address"])
-        ws.cell(row=row_num, column=10, value=student_data["status"])
-        ws.cell(row=row_num, column=11, value=student_data["group"])
-        ws.cell(row=row_num, column=12, value=student_data["parent_names"])
-        ws.cell(row=row_num, column=13, value=student_data["parent_phones"])
-        ws.cell(row=row_num, column=14, value=student_data["contract_number"])
-        ws.cell(row=row_num, column=15, value=student_data["contract_start"])
-        ws.cell(row=row_num, column=16, value=student_data["contract_end"])
-        ws.cell(row=row_num, column=17, value=student_data["contract_status"])
-        ws.cell(row=row_num, column=18, value=student_data["monthly_fee"])
-        ws.cell(row=row_num, column=19, value=student_data["terminated_at"])
-        ws.cell(row=row_num, column=20, value=student_data["termination_reason"])
+        ws.cell(row=row_num, column=7, value=student_data["ampula"])
+        ws.cell(row=row_num, column=8, value=student_data["pnfl"])
+        ws.cell(row=row_num, column=9, value=student_data["phone"])
+        ws.cell(row=row_num, column=10, value=student_data["address"])
+        ws.cell(row=row_num, column=11, value=student_data["status"])
+        ws.cell(row=row_num, column=12, value=student_data["group"])
+        ws.cell(row=row_num, column=13, value=student_data["contract_number"])
+        ws.cell(row=row_num, column=14, value=student_data["contract_start"])
+        ws.cell(row=row_num, column=15, value=student_data["contract_end"])
+        ws.cell(row=row_num, column=16, value=student_data["contract_status"])
+        ws.cell(row=row_num, column=17, value=student_data["terminated_at"])
+        ws.cell(row=row_num, column=18, value=student_data["termination_reason"])
 
     current_row = 2
     for row in non_terminated_rows:
@@ -628,9 +614,8 @@ async def export_comprehensive_student_data(
     # Adjust column widths
     column_widths = {
         'A': 12, 'B': 15, 'C': 15, 'D': 15, 'E': 10, 'F': 10,
-        'G': 18, 'H': 15, 'I': 30, 'J': 12, 'K': 20, 'L': 25,
-        'M': 20, 'N': 18, 'O': 15, 'P': 15, 'Q': 15, 'R': 12,
-        'S': 15, 'T': 20
+        'G': 18, 'H': 18, 'I': 15, 'J': 30, 'K': 12, 'L': 20,
+        'M': 18, 'N': 15, 'O': 15, 'P': 15, 'Q': 15, 'R': 20
     }
 
     for col, width in column_widths.items():
@@ -722,7 +707,6 @@ async def create_student(
     return DataResponse(data=StudentRead.model_validate(student))
 
 from dateutil.relativedelta import relativedelta
-from decimal import Decimal, InvalidOperation
 from fastapi import HTTPException
 import asyncio
 
@@ -731,138 +715,115 @@ async def create_student_with_contract(
     user: Annotated[User, Depends(require_permission(PERM_STUDENTS_EDIT))],
     db: Annotated[AsyncSession, Depends(get_db)],
 
-    # ========== JSON DATA ==========
-    student_data: str = Form(..., description="Student data as JSON"),
-    contract_data: str = Form(..., description="Contract data as JSON"),
+    student_data: str = Form(..., description="Student payload as JSON string. Required fields: first_name, last_name, date_of_birth, height, weight, pnfl, group_id."),
+    contract_data: str = Form(..., description="Contract payload as JSON string. Required keys: contract_number, shartnoma_muddati.boshlanish."),
 
-    # ========== DOCUMENT FILES (FormData) ==========
-    passport_copy: UploadFile = File(..., description="Profile photo / Father passport (used as profile image)"),
-    form_086: UploadFile = File(..., description="Medical form 086 file"),
-    heart_checkup: UploadFile = File(..., description="Heart checkup document file"),
-    birth_certificate: UploadFile = File(..., description="Birth certificate (front side)"),
-    contract_image_1: UploadFile | None = File(None, description="Birth certificate back (optional)"),
-    contract_image_2: UploadFile = File(..., description="Father passport front (mandatory)"),
-    contract_image_3: UploadFile | None = File(None, description="Father passport back (optional)"),
-    contract_image_4: UploadFile = File(..., description="Mother passport front (mandatory)"),
-    contract_image_5: UploadFile | None = File(None, description="Mother passport back (optional)"),
-
+    passport_copy: UploadFile | None = File(None, description="Optional. Profile image; if sent, used as student image and included in attachment PDF flow."),
+    form_086: UploadFile | None = File(None, description="Optional. Medical form 086 document."),
+    heart_checkup: UploadFile | None = File(None, description="Optional. Heart checkup document."),
+    birth_certificate: UploadFile | None = File(None, description="Optional. Birth certificate front side."),
+    contract_image_1: UploadFile | None = File(None, description="Optional attachment #1. Usually birth certificate back side."),
+    contract_image_2: UploadFile | None = File(None, description="Optional attachment #2. Usually father passport front side."),
+    contract_image_3: UploadFile | None = File(None, description="Optional attachment #3. Usually father passport back side."),
+    contract_image_4: UploadFile | None = File(None, description="Optional attachment #4. Usually mother passport front side."),
+    contract_image_5: UploadFile | None = File(None, description="Optional attachment #5. Usually mother passport back side."),
 ):
     """
-    Create student with contract and all documents in ONE operation.
+    Create student with contract in one operation.
 
-    **Contract number must be provided by admin**
+    Contract number must be provided by admin:
     - Use GET /contracts/next-available/{group_id} to get the next number
     - Admin must enter the contract_number manually
-    - Numbers must be sequential (N1, N2, N3, etc.)
+    - Numbers must be sequential
     - Terminated contracts release their number and it can be reused
 
-    **student_data JSON structure:**
+    student_data JSON structure:
     ```json
     {
-        "first_name": "Alvaro",
-        "last_name": "Marata",
-        "date_of_birth": "2010-12-06",
-        "height": 152,
-        "weight": 43,
-        "pnfl": "12345678901234",
-        "phone": "998901234567",
-        "address": "Toshkent shahar",
-        "status": "active",
-        "group_id": 1
+      "first_name": "Alvaro",
+      "last_name": "Marata",
+      "date_of_birth": "2010-12-06",
+      "height": 152,
+      "weight": 43,
+      "ampula": "hujumchi",
+      "pnfl": "12345678901234",
+      "phone": "998901234567",
+      "address": "Toshkent shahar",
+      "status": "active",
+      "group_id": 1
     }
     ```
 
-    **contract_data JSON structure:**
+    contract_data JSON structure:
     ```json
-     {
-          "contract_number": "5-2014B1",
-          "student": {
-            "student_image": "student_photo.png",
-            "student_fio": "Юсупов Абдулборий Баҳодирович",
-            "birth_year": "2012",
-            "student_address": "Тошкент ш. Чилонзор т. Лутфий кўчаси 61-уй",
-            "dad_occupation": "Тадбиркор",
-            "mom_occupation": "Уй бекаси",
-            "dad_phone_number": "(33) 135-80-09",
-            "mom_phone_number": "(78) 162-16-14",
-            "mom_fullname": "Бахриддинова Гулова Баҳромовна"
-          },
-          "sana": {
-            "kun": "06",
-            "oy": "Декабр",
-            "yil": "2025"
-          },
-          "buyurtmachi": {
-            "fio": "Юсупов Абдулборий Баҳодирович",
-            "pasport_seriya": "AA 1234567",
-            "pasport_kim_bergan": "Тошкент ш. Чилонзор т. ИИББ бўлими",
-            "pasport_qachon_bergan": "15.03.2018",
-            "manzil": "Тошкент ш., Чилонзор тумани, Лутфий кўчаси 61-уй",
-            "telefon": "+998 (33) 135-80-09"
-          },
-          "tarbiyalanuvchi": {
-            "fio": "Юсупов Абдулборий Баҳодирович",
-            "tugilganlik_guvohnoma": "I-AA 9876543",
-            "tugilganlik_yil": 2011,
-            "guvohnoma_kim_bergan": "Тошкент ш. ФҲБ Чилонзор т. бўлими",
-            "guvohnoma_qachon_bergan": "12.04.2012"
-          },
-          "shartnoma_muddati": {
-            "boshlanish": "2026-01-06",
-            "tugash": "2026-12-06",
-            "yil": "2025"
-          },
-          "tolov": {
-            "oylik_narx": "600 000",
-            "oylik_narx_sozlar": "олти юз минг"
-          }
+    {
+      "contract_number": "5-2014B1",
+      "student": {
+        "student_fio": "Alvaro Marata",
+        "birth_year": "2010",
+        "student_address": "Toshkent shahar"
+      },
+      "buyurtmachi": {
+        "fio": "Valiy",
+        "pasport_seriya": "AA 1234567",
+        "pasport_kim_bergan": "Chilonzor IIB",
+        "pasport_qachon_bergan": "15.03.2018",
+        "manzil": "Toshkent shahar",
+        "telefon": "+998901234567"
+      },
+      "tarbiyalanuvchi": {
+        "fio": "Alvaro Marata",
+        "tugilganlik_guvohnoma": "I-AA 9876543",
+        "tugilganlik_yil": 2010,
+        "guvohnoma_kim_bergan": "FHDYO",
+        "guvohnoma_qachon_bergan": "12.04.2012"
+      },
+      "shartnoma_muddati": {
+        "boshlanish": "2026-01-06",
+        "tugash": "2026-12-06",
+        "yil": "2026"
+      }
     }
-
     ```
 
-    Complete workflow:
-    1. Parse JSON data from student_data and contract_data
-    2. Upload 9 files to AWS S3 automatically
-    3. Create student and contract with ACTIVE status
-    4. Generate PDF contract using contractdoc.py logic
-    5. Return generated PDF file
+    Notes:
+    - Required keys in contract_data: contract_number, shartnoma_muddati.boshlanish
+    - shartnoma_muddati.tugash optional; yuborilmasa 1 yilga avtomatik hisoblanadi
+    - student, buyurtmachi, tarbiyalanuvchi bloklari custom_fields sifatida saqlanadi
+    - sana va student.student_image yuborish shart emas
+    - tarbiyalanuvchi.tugilganlik_guvohnoma bo'lsa duplicate tekshiruvi ishlaydi
     """
-    from app.models.domain import Group, Contract, WaitingList
+    from app.models.domain import Group, Contract
     from app.models.enums import ContractStatus, StudentStatus
-    from app.services.contract_allocation import (
-        is_group_full,
-        ContractNumberAllocationError,
-        validate_contract_number
-    )
+    from app.services.contract_allocation import is_group_full, validate_contract_number
     import json
     import os
     import tempfile
     from datetime import datetime
+    import time
 
-    # Parse JSON data
     try:
         student_info = json.loads(student_data)
         contract_info = json.loads(contract_data)
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
 
-    # Extract required fields from student_data
     first_name = student_info.get("first_name")
     last_name = student_info.get("last_name")
     date_of_birth = student_info.get("date_of_birth")
     height = student_info.get("height")
     weight = student_info.get("weight")
+    ampula = student_info.get("ampula")
     pnfl = str(student_info.get("pnfl") or "").strip()
     phone = student_info.get("phone")
     address = student_info.get("address")
     status = student_info.get("status", "active")
     group_id = student_info.get("group_id")
 
-    # Validate required fields
     if not all([first_name, last_name, date_of_birth, group_id, pnfl]) or height in (None, "") or weight in (None, ""):
         raise HTTPException(
             status_code=400,
-            detail="Missing required fields in student_data: first_name, last_name, date_of_birth, height, weight, pnfl, group_id"
+            detail="Missing required fields in student_data: first_name, last_name, date_of_birth, height, weight, pnfl, group_id",
         )
     if len(pnfl) != 14:
         raise HTTPException(status_code=400, detail="PNFL must be exactly 14 characters")
@@ -875,357 +836,243 @@ async def create_student_with_contract(
     existing_pnfl = await db.execute(select(Student).where(Student.pnfl == pnfl))
     if existing_pnfl.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="PNFL already exists. Please use a unique PNFL")
-    contract_images_urls = []
-    if contract_image_1:
-        contract_images_urls.append(await upload_image_to_s3(contract_image_1, "contracts"))
-    if contract_image_2:
-        contract_images_urls.append(await upload_image_to_s3(contract_image_2, "contracts"))
-    if contract_image_3:
-        contract_images_urls.append(await upload_image_to_s3(contract_image_3, "contracts"))
-    if contract_image_4:
-        contract_images_urls.append(await upload_image_to_s3(contract_image_4, "contracts"))
-    if contract_image_5:
-        contract_images_urls.append(await upload_image_to_s3(contract_image_5, "contracts"))
 
-    # Extract contract fields
     buyurtmachi = contract_info.get("buyurtmachi", {})
-    studentInfo=contract_info.get("student", {})
+    student_block = dict(contract_info.get("student", {}))
     tarbiyalanuvchi = contract_info.get("tarbiyalanuvchi", {})
     shartnoma_muddati = contract_info.get("shartnoma_muddati", {})
-    tolov = contract_info.get("tolov", {})
 
-    # Extract contract_number (required, admin must enter it manually)
     contract_number = contract_info.get("contract_number")
-    print(contract_number,"shu kontrak number")
     if not contract_number:
         raise HTTPException(
             status_code=400,
-            detail="contract_number is required in contract_data. Use GET /contracts/next-available/{group_id} to get the next available number."
+            detail="contract_number is required in contract_data. Use GET /contracts/next-available/{group_id} to get the next available number.",
         )
-    tarbiyalanuvchi = contract_info.get("tarbiyalanuvchi", {})
+
     tugilganlik_guvohnoma = tarbiyalanuvchi.get("tugilganlik_guvohnoma")
-
     if tugilganlik_guvohnoma:
-
         existing_birth_cert = await db.execute(
             select(Contract.id).where(
                 func.jsonb_extract_path_text(
                     cast(Contract.custom_fields, JSONB),
-                    'tarbiyalanuvchi',
-                    'tugilganlik_guvohnoma'
+                    "tarbiyalanuvchi",
+                    "tugilganlik_guvohnoma",
                 ) == tugilganlik_guvohnoma
             )
         )
-
         if existing_birth_cert.scalar():
             raise HTTPException(
                 status_code=400,
-                detail=f"Bunday student mavjud. Tug'ilganlik guvohnomasi '{tugilganlik_guvohnoma}' allaqachon bazada mavjud."
+                detail=f"Bunday student mavjud. Tug'ilganlik guvohnomasi '{tugilganlik_guvohnoma}' allaqachon bazada mavjud.",
             )
 
-    # Validate group exists and get birth_year from group
     group_result = await db.execute(select(Group).where(Group.id == group_id))
     group = group_result.scalar_one_or_none()
-
     if not group:
         raise HTTPException(status_code=404, detail=f"Group with ID {group_id} not found")
 
-    # Use group's birth_year (not from user input)
     birth_year = group.birth_year
-
-    # Check if group is full
-    group_full = await is_group_full(db, group_id, birth_year)
-
-    if group_full:
+    if await is_group_full(db, group_id, birth_year):
         raise HTTPException(
             status_code=409,
-            detail=f"Group '{group.name}' is full (capacity: {group.capacity}). Cannot create contract. Add to waiting list instead."
+            detail=f"Group '{group.name}' is full (capacity: {group.capacity}). Cannot create contract. Add to waiting list instead.",
         )
 
-    # Upload all files to S3 in PARALLEL (much faster!)
     try:
-        import asyncio
+        for file in [
+            passport_copy,
+            form_086,
+            heart_checkup,
+            birth_certificate,
+            contract_image_1,
+            contract_image_2,
+            contract_image_3,
+            contract_image_4,
+            contract_image_5,
+        ]:
+            if file is not None:
+                file.file.seek(0)
 
-        # Fayl pointerlarini qayta boshiga olish
-        for f in [passport_copy, form_086, heart_checkup, birth_certificate, contract_image_1, contract_image_2, contract_image_3, contract_image_4, contract_image_5]:
-            if f is not None:
-                f.file.seek(0)
-
-        # Helper function to upload file as PDF or return None
         async def upload_or_none(file, folder):
             if file is None:
                 return None
-            # Upload all files as PDF (images will be converted, PDFs uploaded as-is)
             return await upload_as_pdf_to_s3(file, folder)
 
-        # Helper for uploading profile image as JPG/PNG (not PDF)
         async def upload_image_or_none(file, folder):
             if file is None:
                 return None
-            # Upload as image (JPG/PNG) for use in contract page
             return await upload_image_to_s3(file, folder)
 
-        # Prepare all upload jobs (file, folder pairs)
-        upload_jobs = [
-            (passport_copy, "student-documents", True),   # 0: Profile image - keep as JPG for contract
-            (form_086, "student-documents", False),       # 1: Medical form - convert to PDF
-            (heart_checkup, "student-documents", False),  # 2: Heart checkup - convert to PDF
-            (birth_certificate, "student-documents", False),  # 3: Birth certificate - convert to PDF
-            (contract_image_1, "contracts", False),       # 4: Birth certificate back - convert to PDF
-            (contract_image_2, "contracts", False),       # 5: Father passport - convert to PDF
-            (contract_image_3, "contracts", False),       # 6: Father passport back - convert to PDF
-            (contract_image_4, "contracts", False),       # 7: Mother passport - convert to PDF
-            (contract_image_5, "contracts", False),       # 8: Mother passport back - convert to PDF
-        ]
-
-        # Upload ALL files in parallel
-        # Profile image as JPG/PNG, attachments as PDF
         async def upload_with_type(file, folder, as_image):
             if as_image:
                 return await upload_image_or_none(file, folder)
-            else:
-                return await upload_or_none(file, folder)
+            return await upload_or_none(file, folder)
 
+        upload_jobs = [
+            (passport_copy, "student-documents", True),
+            (form_086, "student-documents", False),
+            (heart_checkup, "student-documents", False),
+            (birth_certificate, "student-documents", False),
+            (contract_image_1, "contracts", False),
+            (contract_image_2, "contracts", False),
+            (contract_image_3, "contracts", False),
+            (contract_image_4, "contracts", False),
+            (contract_image_5, "contracts", False),
+        ]
         results = await asyncio.gather(*[upload_with_type(file, folder, as_image) for file, folder, as_image in upload_jobs])
-
-        # Unpack results
         passport_copy_url, form_086_url, heart_checkup_url, birth_certificate_url, *contract_images_urls = results
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error uploading files to S3: {str(e)}")
 
-    # Parse date_of_birth if string
     if isinstance(date_of_birth, str):
-        from datetime import datetime
         date_of_birth = datetime.strptime(date_of_birth, "%Y-%m-%d").date()
 
-    # Get current year for archive
     current_year = datetime.now().year
-
-    # Create student
-    student_status = StudentStatus.ACTIVE if status.lower() == "active" else StudentStatus.INACTIVE
+    student_status = StudentStatus.ACTIVE if str(status).lower() == "active" else StudentStatus.INACTIVE
     student = Student(
         first_name=first_name,
         last_name=last_name,
         date_of_birth=date_of_birth,
         height=height,
         weight=weight,
+        ampula=ampula,
         pnfl=pnfl,
         phone=phone,
         address=address,
         status=student_status,
         group_id=group_id,
-        archive_year=current_year  # Set current year as archive year
+        archive_year=current_year,
     )
     db.add(student)
-    # Use flush() instead of commit() to get the student.id without committing the transaction
-    # If PDF generation fails later, we can still rollback everything
     await db.flush()
     await db.refresh(student)
 
-    # Validate the contract number provided by admin
-    is_valid, message, sequence_number = await validate_contract_number(
-        db, contract_number, group_id, birth_year, current_year
-    )
-
+    is_valid, message, sequence_number = await validate_contract_number(db, contract_number, group_id, birth_year, current_year)
     if not is_valid:
-        # Rollback student creation if contract number is invalid
-        # Since we used flush() instead of commit(), rollback() will undo everything
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid contract number: {message}. Use GET /contracts/next-available/{group_id} to get the next available number."
+            detail=f"Invalid contract number: {message}. Use GET /contracts/next-available/{group_id} to get the next available number.",
         )
 
-    # Parse contract dates
     start_date_str = shartnoma_muddati.get("boshlanish")
     end_date_str = shartnoma_muddati.get("tugash")
     year_val = shartnoma_muddati.get("yil")
-    monthly_fee_raw = tolov.get("oylik_narx", 0)
 
-
-    try:
-        if isinstance(monthly_fee_raw, str):
-            # Masalan: "600 000" yoki "600,000" yoki "600000"
-            cleaned = monthly_fee_raw.replace(" ", "").replace(",", "")
-            monthly_fee = Decimal(cleaned)
-        else:
-            monthly_fee = Decimal(monthly_fee_raw)
-    except (InvalidOperation, TypeError, ValueError):
-        raise HTTPException(
-            status_code=400,
-            detail=f"To‘lov miqdati noto‘g‘ri formatda yuborilgan: {monthly_fee_raw!r}"
-        )
-
-    # --- Sana formatlarini tekshirish (boshlanish) ---
     try:
         if start_date_str:
-            # Foydalanuvchi "2025-01-01" formatda yuboradi
             start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
         else:
             raise ValueError("boshlanish sanasi kiritilmagan")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Sana formati noto‘g‘ri (boshlanish): {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Sana formati noto'g'ri (boshlanish): {str(e)}")
 
-    # --- Tugash sanasi ---
     try:
-        if end_date_str and end_date_str.isdigit():
-            # Masalan: "31" → 31 dekabr {yil}
+        if end_date_str and str(end_date_str).isdigit():
             end_date = datetime(int(year_val or start_date.year), 12, int(end_date_str)).date()
         elif end_date_str:
-            # Agar foydalanuvchi ISO formatda yuborsa
             end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
         else:
-            # Tugash kiritilmagan bo‘lsa — 1 yilga uzaytiramiz
             end_date = start_date + relativedelta(years=1)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Sana formati noto‘g‘ri (tugash): {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Sana formati noto'g'ri (tugash): {str(e)}")
 
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Sana formati noto‘g‘ri (tugash): {str(e)}")
-
-    # Convert data to JSON strings for storage
     contract_images_json_str = json.dumps(contract_images_urls)
     custom_fields_json_str = json.dumps(contract_info, ensure_ascii=False, default=str)
-    existing_contract = await db.execute(
-        select(Contract).where(Contract.contract_number == contract_number)
-    )
+    existing_contract = await db.execute(select(Contract).where(Contract.contract_number == contract_number))
     if existing_contract.scalar():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Shartnoma raqami '{contract_number}' allaqachon mavjud."
-        )
-    # Create contract in ACTIVE status (no signature needed)
+        raise HTTPException(status_code=400, detail=f"Shartnoma raqami '{contract_number}' allaqachon mavjud.")
+
     contract = Contract(
         contract_number=contract_number,
         birth_year=birth_year,
         sequence_number=sequence_number,
         start_date=start_date,
         end_date=end_date,
-        monthly_fee=monthly_fee,
         status=ContractStatus.ACTIVE,
         student_id=student.id,
         group_id=group_id,
-        archive_year=current_year,  # Set current year as archive year
+        archive_year=current_year,
         passport_copy_url=passport_copy_url,
         form_086_url=form_086_url,
         heart_checkup_url=heart_checkup_url,
         birth_certificate_url=birth_certificate_url,
         contract_images_urls=contract_images_json_str,
-        custom_fields=custom_fields_json_str
+        custom_fields=custom_fields_json_str,
     )
-
-    # Add contract to session but DON'T commit yet
-    # We'll only commit after PDF is successfully generated and uploaded
     db.add(contract)
 
-    # Prepare data for PDF generation (contractdoc.py format)
-    # Parse sana from start_date
-    sana_obj = start_date
-    months_uz = {
-        1: "январь", 2: "февраль", 3: "март", 4: "апрель",
-        5: "май", 6: "июнь", 7: "июль", 8: "август",
-        9: "сентябрь", 10: "октябрь", 11: "ноябрь", 12: "декабрь"
-    }
-
     pdf_data = {
+        "render_text_content": False,
         "shartnoma_raqami": contract_number,
-        "student": contract_info.get("student", {}),
+        "student": student_block,
         "sana": {
-            "kun": f"{sana_obj.day:02d}",
-            "oy": months_uz.get(sana_obj.month, ""),
-            "yil": str(sana_obj.year)
+            "kun": f"{start_date.day:02d}",
+            "oy": str(start_date.month),
+            "yil": str(start_date.year),
         },
         "buyurtmachi": buyurtmachi,
         "tarbiyalanuvchi": tarbiyalanuvchi,
         "shartnoma_muddati": {
-            "boshlanish": start_date.strftime('«%d» %B'),
-            "tugash": end_date.strftime('«%d» %B'),
-            "yil": str(start_date.year)
+            "boshlanish": start_date.strftime("%d.%m.%Y"),
+            "tugash": end_date.strftime("%d.%m.%Y"),
+            "yil": str(start_date.year),
         },
-        "tolov": {
-            "oylik_narx": f"{monthly_fee:,.0f}".replace(",", " "),
-            "oylik_narx_sozlar": "sum"  # You can add number-to-words conversion here
-        }
+        "passport_copy_url": passport_copy_url,
+        "form_086_url": form_086_url,
+        "heart_checkup_url": heart_checkup_url,
+        "birth_certificate_url": birth_certificate_url,
+        "contract_images_urls": contract_images_urls,
     }
-    # passport_copy ni profile image sifatida ishlatamiz
     pdf_data["student"]["student_image"] = passport_copy_url
-
-    # Generate PDF with attachments (images at the end)
-    import time
 
     temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     pdf_path = temp_pdf.name
     temp_pdf.close()
 
     try:
-        # Add URLs to pdf_data for contract_pdf.py to use
-        pdf_data["passport_copy_url"] = passport_copy_url
-        pdf_data["form_086_url"] = form_086_url
-        pdf_data["heart_checkup_url"] = heart_checkup_url
-        pdf_data["birth_certificate_url"] = birth_certificate_url
-        pdf_data["contract_images_urls"] = contract_images_urls
-
         generator = ContractPDFGenerator(pdf_data)
-
-        # Generate PDF with all attachments (contract_pdf.py handles ordering)
-        # Run in thread pool to avoid blocking the event loop during PDF merge
-        import asyncio
         final_pdf_path = await asyncio.to_thread(generator.generate, pdf_path)
 
-        # Check if generation was successful
-        if not final_pdf_path or not isinstance(final_pdf_path, (str, os.PathLike)):
-            raise ValueError(f"PDF generation failed: {type(final_pdf_path)}")
+        pdf_s3_url = None
+        if final_pdf_path and isinstance(final_pdf_path, (str, os.PathLike)):
+            pdf_s3_url = await upload_pdf_to_s3(final_pdf_path, contract_number)
+            contract.final_pdf_url = pdf_s3_url
 
-        # Upload final PDF to S3 (async, non-blocking)
-        pdf_s3_url = await upload_pdf_to_s3(final_pdf_path, contract_number)
-
-        # Update contract with PDF URL and commit everything
-        # This is the ONLY commit - if we reach here, everything succeeded
-        contract.final_pdf_url = pdf_s3_url
         await db.commit()
         await db.refresh(contract)
 
-        # Clean up temp files
         try:
             time.sleep(0.2)
             if os.path.exists(pdf_path):
                 os.unlink(pdf_path)
-            if os.path.exists(final_pdf_path):
+            if final_pdf_path and os.path.exists(final_pdf_path):
                 os.unlink(final_pdf_path)
-        except:
+        except Exception:
             pass
 
-        # Return success response with contract and PDF URL
         return DataResponse(data={
             "message": "Student and contract created successfully",
             "student_id": student.id,
             "contract_id": contract.id,
             "contract_number": contract_number,
-            "pdf_url": pdf_s3_url
+            "pdf_url": pdf_s3_url,
         })
-
     except Exception as e:
-        # PDF generation or upload failed - rollback EVERYTHING
-        # Since we used flush() instead of commit(), rollback() will undo both student and contract
         await db.rollback()
-
-        # Clean up temp files
         try:
             time.sleep(0.2)
             if os.path.exists(pdf_path):
                 os.unlink(pdf_path)
-            if 'final_pdf_path' in locals() and os.path.exists(final_pdf_path):
+            if 'final_pdf_path' in locals() and final_pdf_path and os.path.exists(final_pdf_path):
                 os.unlink(final_pdf_path)
-        except:
+        except Exception:
             pass
 
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to create contract: {str(e)}. Student and contract data have been rolled back."
+            detail=f"Failed to create contract: {str(e)}. Student and contract data have been rolled back.",
         )
-
-
 
 
 @router.get("/{student_id}", response_model=DataResponse[StudentRead], dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
@@ -1250,13 +1097,12 @@ async def get_student_full_info(
     """
     Get complete student information including:
     - Student details
-    - Parents
     - Contracts
     - Group
     - Coach (teacher)
     - Attendance records
     """
-    from app.models.domain import Contract, Parent, Group
+    from app.models.domain import Contract, Group
     from app.models.auth import User
 
     # Fetch student
@@ -1265,10 +1111,6 @@ async def get_student_full_info(
 
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
-
-    # Fetch parents
-    parents_result = await db.execute(select(Parent).where(Parent.student_id == student_id))
-    parents = parents_result.scalars().all()
 
     # Fetch contracts
     contracts_result = await db.execute(
@@ -1307,7 +1149,6 @@ async def get_student_full_info(
 
     full_info = StudentFullInfo(
         student=StudentRead.model_validate(student),
-        parents=[ParentRead.model_validate(p) for p in parents],
         contracts=[ContractRead.model_validate(c) for c in contracts],
         group=GroupRead.model_validate(group) if group else None,
         coach=UserRead.model_validate(coach) if coach else None,
@@ -1571,7 +1412,6 @@ async def hard_delete_student(
     - Student record
     - All contracts (CASCADE)
     - All transactions (CASCADE)
-    - All parents (CASCADE)
     - All attendance records (CASCADE)
     - All gate logs (CASCADE)
     - All waiting list entries (CASCADE)
@@ -1598,7 +1438,7 @@ async def hard_delete_student(
 
     # HARD DELETE using raw SQL to avoid SQLAlchemy relationship loading issues
     # CASCADE will automatically delete:
-    # - contracts, transactions, parents, attendance, gate_logs, waiting_list
+    # - contracts, transactions, attendance, gate_logs, waiting_list
     await db.execute(sql_delete(Student).where(Student.id == student_id))
     await db.commit()
 
@@ -1648,3 +1488,4 @@ async def bulk_delete_students(
         "total_requested": len(student_ids),
         "errors": errors if errors else None
     })
+

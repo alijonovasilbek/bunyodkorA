@@ -9,7 +9,7 @@ from app.core.db import get_db
 from app.core.permissions import PERM_STUDENTS_EDIT
 from app.schemas.common import DataResponse
 from app.deps import require_permission
-from app.models.domain import Student, Parent, Contract, Group
+from app.models.domain import Student, Contract, Group
 from app.models.enums import StudentStatus, ContractStatus
 
 router = APIRouter(prefix="/import", tags=["Import"])
@@ -29,21 +29,16 @@ async def import_students(
     - date_of_birth: Format YYYY-MM-DD (required)
     - height: Student height (required)
     - weight: Student weight (required)
+    - ampula: Student ampula/position
     - pnfl: Unique 14-digit PNFL (required)
     - phone: Student phone number
     - address: Student address
     - face_id: Unique face ID
     - status: ACTIVE, INACTIVE, GRADUATED, EXPELLED (default: ACTIVE)
     - group_name: Name of the group to assign student to
-    - parent_first_name: Parent first name
-    - parent_last_name: Parent last name
-    - parent_phone: Parent phone number
-    - parent_email: Parent email
-    - parent_relationship: Mother, Father, Guardian, etc.
     - contract_number: Unique contract number
     - contract_start_date: Format YYYY-MM-DD
     - contract_end_date: Format YYYY-MM-DD
-    - monthly_fee: Monthly fee amount
     """
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Only Excel files (.xlsx, .xls) are supported")
@@ -141,6 +136,7 @@ async def import_students(
                     date_of_birth=date_of_birth,
                     height=height,
                     weight=weight,
+                    ampula=row_data.get('ampula'),
                     pnfl=pnfl,
                     phone=row_data.get('phone'),
                     address=row_data.get('address'),
@@ -150,18 +146,6 @@ async def import_students(
                 )
                 db.add(student)
                 await db.flush()  # Get student ID
-
-                # Create parent if data provided
-                if row_data.get('parent_first_name') and row_data.get('parent_last_name') and row_data.get('parent_phone'):
-                    parent = Parent(
-                        first_name=row_data['parent_first_name'],
-                        last_name=row_data['parent_last_name'],
-                        phone=row_data['parent_phone'],
-                        email=row_data.get('parent_email'),
-                        relationship_type=row_data.get('parent_relationship'),
-                        student_id=student.id,
-                    )
-                    db.add(parent)
 
                 # Create contract if data provided
                 if row_data.get('contract_number'):
@@ -198,15 +182,10 @@ async def import_students(
                     if not contract_start or not contract_end:
                         raise ValueError(f"Contract dates required for contract {row_data['contract_number']}")
 
-                    monthly_fee = float(row_data.get('monthly_fee', 0))
-                    if monthly_fee <= 0:
-                        raise ValueError(f"Invalid monthly_fee for contract {row_data['contract_number']}")
-
                     contract = Contract(
                         contract_number=row_data['contract_number'],
                         start_date=contract_start,
                         end_date=contract_end,
-                        monthly_fee=monthly_fee,
                         status=ContractStatus.ACTIVE,
                         student_id=student.id,
                     )
