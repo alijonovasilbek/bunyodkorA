@@ -1,5 +1,7 @@
 import boto3
 import io
+import mimetypes
+import os
 from uuid import uuid4
 from fastapi import UploadFile
 from PIL import Image
@@ -406,4 +408,58 @@ def generate_signed_url(value: str, expires_seconds: int = 180) -> str:
         )
     except Exception as e:
         raise Exception(f"Signed URL error: {str(e)}")
+
+
+async def upload_private_document_to_s3(file: UploadFile, folder: str = "president_documents") -> str:
+    """
+    Upload a private document to S3 and return the stored object key.
+
+    Supported formats:
+    - PDF
+    - DOC
+    - DOCX
+    """
+    import asyncio
+
+    if not file:
+        return None
+
+    folder = remap_s3_folder(folder)
+    extension = os.path.splitext(file.filename or "")[1].lower()
+    allowed_extensions = {".pdf", ".doc", ".docx"}
+    if extension not in allowed_extensions:
+        raise Exception("Unsupported document format. Allowed formats: PDF, DOC, DOCX")
+
+    content = await file.read()
+    content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "application/octet-stream"
+    key = f"{folder}/{uuid4()}{extension}"
+
+    def _upload() -> None:
+        buffer = io.BytesIO(content)
+        s3.upload_fileobj(
+            Fileobj=buffer,
+            Bucket=AWS_BUCKET_NAME,
+            Key=key,
+            ExtraArgs={"ContentType": content_type},
+        )
+
+    await asyncio.to_thread(_upload)
+    return key
+
+
+async def download_s3_object(key: str) -> tuple[bytes, str | None]:
+    """
+    Download a private S3 object by key.
+    Returns file bytes and detected content type.
+    """
+    import asyncio
+
+    normalized_key = normalize_s3_key(key)
+
+    def _download() -> tuple[bytes, str | None]:
+        response = s3.get_object(Bucket=AWS_BUCKET_NAME, Key=normalized_key)
+        data = response["Body"].read()
+        return data, response.get("ContentType")
+
+    return await asyncio.to_thread(_download)
 

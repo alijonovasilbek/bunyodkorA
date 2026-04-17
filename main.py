@@ -22,6 +22,7 @@ from app.routers import (
     waiting_list,
     uploads,
     archive,
+    president_documents,
 )
 from app.services.backup import backup_service
 from app.services.telegram_error_logging import setup_telegram_error_logging
@@ -201,6 +202,7 @@ app.include_router(backup.router)
 app.include_router(waiting_list.router)
 app.include_router(uploads.router)
 app.include_router(archive.router)
+app.include_router(president_documents.router)
 
 if __name__ == "__main__":
     import uvicorn

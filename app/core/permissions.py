@@ -24,6 +24,11 @@ PERM_USERS_MANAGE = "users:manage"
 
 PERM_GATE_LOGS_VIEW = "gate:logs:view"
 
+PERM_PRESIDENT_DOCUMENTS_VIEW = "president_documents:view"
+PERM_PRESIDENT_DOCUMENTS_CREATE = "president_documents:create"
+PERM_PRESIDENT_DOCUMENTS_EDIT = "president_documents:edit"
+PERM_PRESIDENT_DOCUMENTS_DELETE = "president_documents:delete"
+
 ALL_PERMISSIONS = [
     {"code": PERM_STUDENTS_VIEW, "description": "View students"},
     {"code": PERM_STUDENTS_EDIT, "description": "Edit students"},
@@ -42,6 +47,10 @@ ALL_PERMISSIONS = [
     {"code": PERM_ROLES_MANAGE, "description": "Manage roles and permissions"},
     {"code": PERM_USERS_MANAGE, "description": "Manage users"},
     {"code": PERM_GATE_LOGS_VIEW, "description": "View gate logs"},
+    {"code": PERM_PRESIDENT_DOCUMENTS_VIEW, "description": "View president documents"},
+    {"code": PERM_PRESIDENT_DOCUMENTS_CREATE, "description": "Create president documents"},
+    {"code": PERM_PRESIDENT_DOCUMENTS_EDIT, "description": "Edit president documents"},
+    {"code": PERM_PRESIDENT_DOCUMENTS_DELETE, "description": "Delete president documents"},
 ]
 
 DEFAULT_ROLES = {
@@ -60,6 +69,7 @@ DEFAULT_ROLES = {
             PERM_REPORTS_DASHBOARD_VIEW,
             PERM_GATE_LOGS_VIEW,
             PERM_SETTINGS_SYSTEM_VIEW,
+            PERM_PRESIDENT_DOCUMENTS_VIEW,
         ],
     },
     "Accountant": {
@@ -68,6 +78,7 @@ DEFAULT_ROLES = {
             PERM_STUDENTS_VIEW,
             PERM_CONTRACTS_VIEW,
             PERM_REPORTS_DASHBOARD_VIEW,
+            PERM_PRESIDENT_DOCUMENTS_VIEW,
         ],
     },
     "Head Coach": {
@@ -104,6 +115,10 @@ DEFAULT_ROLES = {
             PERM_ATTENDANCE_VIEW,
             PERM_GATE_LOGS_VIEW,
             PERM_REPORTS_DASHBOARD_VIEW,
+            PERM_PRESIDENT_DOCUMENTS_VIEW,
+            PERM_PRESIDENT_DOCUMENTS_CREATE,
+            PERM_PRESIDENT_DOCUMENTS_EDIT,
+            PERM_PRESIDENT_DOCUMENTS_DELETE,
         ],
     },
 }

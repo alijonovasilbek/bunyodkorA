@@ -141,4 +141,14 @@ class WaitingList(Base, TimestampMixin):
 
     # Relationships (no student relationship - independent data)
     group: Mapped["Group"] = relationship("Group", back_populates="waiting_list")
+
+
+class PresidentDocument(Base, TimestampMixin):
+    __tablename__ = "president_document"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    image_keys: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array of S3 object keys
+    document_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     added_by: Mapped["User"] = relationship("User")
