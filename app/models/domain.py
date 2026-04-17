@@ -151,4 +151,3 @@ class PresidentDocument(Base, TimestampMixin):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     image_keys: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array of S3 object keys
     document_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    added_by: Mapped["User"] = relationship("User")
