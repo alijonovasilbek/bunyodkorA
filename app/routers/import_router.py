@@ -131,6 +131,7 @@ async def import_students(
                     phone=row_data.get('phone'),
                     address=row_data.get('address'),
                     status=student_status,
+                    archive_year=datetime.now().year,
                     group_id=group_id,
                 )
                 db.add(student)

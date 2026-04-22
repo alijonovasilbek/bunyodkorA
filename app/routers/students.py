@@ -5,7 +5,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query, File, Form, UploadFile
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, extract
 from datetime import datetime, date
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -160,11 +160,16 @@ async def get_students(
     - Shows current year's students only
     - Shows only ACTIVE students unless filters are provided
     """
-    from datetime import datetime as dt
+    current_year = datetime.now().year
     if archive_year is None:
-        archive_year = dt.now().year
+        year_filter = or_(
+            Student.archive_year == current_year,
+            extract("year", Student.created_at) == current_year,
+        )
+    else:
+        year_filter = Student.archive_year == archive_year
 
-    query = select(Student).where(Student.archive_year == archive_year)
+    query = select(Student).where(year_filter)
 
     # Status behavior:
     # - explicit status filter: return only that status
@@ -193,7 +198,7 @@ async def get_students(
     result = await db.execute(query.offset(offset).limit(page_size))
     students = result.scalars().all()
 
-    count_query = select(func.count(Student.id)).where(Student.archive_year == archive_year)
+    count_query = select(func.count(Student.id)).where(year_filter)
     if status:
         count_query = count_query.where(Student.status == status)
     elif include_archived:
@@ -418,7 +423,9 @@ async def create_student(
                        f"Cannot add more active students."
             )
 
-    student = Student(**student_payload.model_dump())
+    student_data = student_payload.model_dump()
+    student_data["archive_year"] = datetime.now().year
+    student = Student(**student_data)
     db.add(student)
     await db.commit()
     await db.refresh(student)
