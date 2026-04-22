@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, File, Form, Upload
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, extract
+from sqlalchemy.orm import selectinload
 from datetime import datetime, date
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -244,7 +245,7 @@ async def export_comprehensive_student_data(
     - status: Filter by student status (e.g., 'active', 'archived')
     """
     # Build student query with filters
-    students_query = select(Student)
+    students_query = select(Student).options(selectinload(Student.group))
 
     if group_id:
         students_query = students_query.where(Student.group_id == group_id)
