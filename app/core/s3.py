@@ -21,9 +21,7 @@ s3 = boto3.client(
 )
 
 S3_FOLDER_RENAMES = {
-    "contracts": "contractsa",
     "student-documents": "student-documentsa",
-    "contract-pdfs": "contract-pdfsa",
     "konspekts": "konspektsa",
 }
 
@@ -42,7 +40,7 @@ def remap_s3_folder(folder: str) -> str:
 
     return normalized_folder
 
-async def upload_image_to_s3(file: UploadFile, folder: str = "contracts") -> str:
+async def upload_image_to_s3(file: UploadFile, folder: str = "uploads") -> str:
     """
     Upload image to S3 with automatic format conversion.
 
@@ -319,59 +317,6 @@ async def upload_as_pdf_to_s3(file: UploadFile, folder: str = "student-documents
 
     except Exception as e:
         raise Exception(f"Failed to upload file as PDF: {str(e)}")
-
-
-async def upload_pdf_to_s3(pdf_file_path: str, contract_number: str, folder: str = "contract-pdfs") -> str:
-    """
-    Upload PDF file to S3 from local file path (async, non-blocking).
-
-    Args:
-        pdf_file_path: Local file system path to PDF
-        contract_number: Contract number for filename (e.g., N12017)
-        folder: S3 folder name
-
-    Returns:
-        S3 URL of uploaded PDF
-    """
-    import asyncio
-
-    try:
-        folder = remap_s3_folder(folder)
-
-        # Read PDF file asynchronously
-        def _read_and_upload():
-            with open(pdf_file_path, 'rb') as f:
-                pdf_content = f.read()
-
-            buffer = io.BytesIO(pdf_content)
-
-            # Create unique key
-            key = f"{folder}/{contract_number}_{uuid4()}.pdf"
-
-            # Upload to S3 (public-read for easy access)
-            s3.upload_fileobj(
-                Fileobj=buffer,
-                Bucket=AWS_BUCKET_NAME,
-                Key=key,
-                ExtraArgs={
-                    "ContentType": "application/pdf",
-                }
-            )
-
-            return f"https://{AWS_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{key}"
-
-        # Run in thread pool to avoid blocking the event loop
-        return await asyncio.to_thread(_read_and_upload)
-
-    except Exception as e:
-        raise Exception(f"PDF S3 upload error: {e}")
-
-
-
-
-
-
-
 
 
 from urllib.parse import urlparse

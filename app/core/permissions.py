@@ -4,9 +4,6 @@ PERM_STUDENTS_EDIT = "students:edit"
 PERM_GROUPS_VIEW = "groups:view"
 PERM_GROUPS_EDIT = "groups:edit"
 
-PERM_CONTRACTS_VIEW = "contracts:view"
-PERM_CONTRACTS_EDIT = "contracts:edit"
-
 PERM_ATTENDANCE_COACH_MARK = "attendance:coach:mark"
 PERM_ATTENDANCE_VIEW = "attendance:view"
 
@@ -34,8 +31,6 @@ ALL_PERMISSIONS = [
     {"code": PERM_STUDENTS_EDIT, "description": "Edit students"},
     {"code": PERM_GROUPS_VIEW, "description": "View groups"},
     {"code": PERM_GROUPS_EDIT, "description": "Edit groups"},
-    {"code": PERM_CONTRACTS_VIEW, "description": "View contracts"},
-    {"code": PERM_CONTRACTS_EDIT, "description": "Edit contracts"},
     {"code": PERM_ATTENDANCE_COACH_MARK, "description": "Mark attendance as coach"},
     {"code": PERM_ATTENDANCE_VIEW, "description": "View attendance records"},
     {"code": PERM_SESSIONS_CREATE, "description": "Create training sessions"},
@@ -63,7 +58,6 @@ DEFAULT_ROLES = {
         "permissions": [
             PERM_STUDENTS_VIEW,
             PERM_GROUPS_VIEW,
-            PERM_CONTRACTS_VIEW,
             PERM_ATTENDANCE_VIEW,
             PERM_REPORTS_ATTENDANCE_VIEW,
             PERM_REPORTS_DASHBOARD_VIEW,
@@ -76,7 +70,6 @@ DEFAULT_ROLES = {
         "description": "Financial management",
         "permissions": [
             PERM_STUDENTS_VIEW,
-            PERM_CONTRACTS_VIEW,
             PERM_REPORTS_DASHBOARD_VIEW,
             PERM_PRESIDENT_DOCUMENTS_VIEW,
         ],
@@ -110,8 +103,6 @@ DEFAULT_ROLES = {
             PERM_STUDENTS_EDIT,
             PERM_GROUPS_VIEW,
             PERM_GROUPS_EDIT,
-            PERM_CONTRACTS_VIEW,
-            PERM_CONTRACTS_EDIT,
             PERM_ATTENDANCE_VIEW,
             PERM_GATE_LOGS_VIEW,
             PERM_REPORTS_DASHBOARD_VIEW,

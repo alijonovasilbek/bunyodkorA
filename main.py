@@ -11,7 +11,6 @@ from app.routers import (
     roles,
     students,
     groups,
-    contracts,
     coach,
     head_coach,
     gate,
@@ -191,7 +190,6 @@ app.include_router(users.router)
 app.include_router(roles.router)
 app.include_router(students.router)
 app.include_router(groups.router)
-app.include_router(contracts.router)
 app.include_router(coach.router)
 app.include_router(head_coach.router)
 app.include_router(gate.router)

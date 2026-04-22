@@ -2,17 +2,15 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
-from sqlalchemy.orm import selectinload
 from collections import defaultdict
 from app.core.db import get_db
 from app.core.permissions import PERM_GROUPS_VIEW, PERM_GROUPS_EDIT
-from app.models.domain import Group, Student, Contract, WaitingList
+from app.models.domain import Group, Student, WaitingList
 from app.schemas.group import GroupRead, GroupCreate, GroupUpdate, GroupCapacityInfo, GroupCapacityByYear, GroupsByYear, GroupedByYearResponse, GroupStatistics, GroupStatisticsByBirthYear
 from app.schemas.student import StudentRead
-from app.schemas.contract import ContractRead
 from app.schemas.common import DataResponse, PaginationMeta
 from app.deps import require_permission
-from app.models.enums import ContractStatus, GroupStatus, StudentStatus
+from app.models.enums import GroupStatus, StudentStatus
 
 router = APIRouter(prefix="/groups", tags=["Groups"])
 
@@ -78,13 +76,13 @@ async def get_groups(
     for group in groups:
         group_dict = GroupRead.model_validate(group).model_dump()
 
-        # Count active contracts in this group (terminated contracts do not occupy slots)
+        # Count active students in this group
         student_count_result = await db.execute(
-            select(func.count(Contract.id)).where(
+            select(func.count(Student.id)).where(
                 and_(
-                    Contract.group_id == group.id,
-                    Contract.status == ContractStatus.ACTIVE,
-                    Contract.archive_year == group.archive_year,
+                    Student.group_id == group.id,
+                    Student.status == StudentStatus.ACTIVE,
+                    Student.archive_year == group.archive_year,
                 )
             )
         )
@@ -178,13 +176,13 @@ async def get_groups_grouped_by_year(
         for group in year_groups:
             group_dict = GroupRead.model_validate(group).model_dump()
 
-            # Count active contracts (terminated contracts do not occupy slots)
+            # Count active students
             student_count_result = await db.execute(
-                select(func.count(Contract.id)).where(
+                select(func.count(Student.id)).where(
                     and_(
-                        Contract.group_id == group.id,
-                        Contract.status == ContractStatus.ACTIVE,
-                        Contract.archive_year == group.archive_year,
+                        Student.group_id == group.id,
+                        Student.status == StudentStatus.ACTIVE,
+                        Student.archive_year == group.archive_year,
                     )
                 )
             )
@@ -285,9 +283,9 @@ async def get_groups_statistics(
     Returns:
     - Total groups count
     - Total capacity (sum of all group capacities)
-    - Total used spots (active contracts)
+    - Total used spots (active students)
     - Total available spots
-    - Number of filled groups (groups where capacity == active contracts)
+    - Number of filled groups (groups where capacity == active students)
     - Statistics grouped by birth year
 
     Example Response:
@@ -333,26 +331,25 @@ async def get_groups_statistics(
     total_groups = len(groups)
     total_capacity = sum(g.capacity for g in groups)
 
-    # Get active contracts count for each group
+    # Get active students count for each group
     group_stats = {}
     for group in groups:
-        # Count active contracts for this group
-        contracts_result = await db.execute(
-            select(func.count(Contract.id)).where(
+        students_result = await db.execute(
+            select(func.count(Student.id)).where(
                 and_(
-                    Contract.group_id == group.id,
-                    Contract.archive_year == archive_year,
-                    Contract.status == ContractStatus.ACTIVE
+                    Student.group_id == group.id,
+                    Student.archive_year == archive_year,
+                    Student.status == StudentStatus.ACTIVE
                 )
             )
         )
-        active_contracts_count = contracts_result.scalar() or 0
+        active_students_count = students_result.scalar() or 0
 
         group_stats[group.id] = {
             'birth_year': group.birth_year,
             'capacity': group.capacity,
-            'used': active_contracts_count,
-            'available': group.capacity - active_contracts_count
+            'used': active_students_count,
+            'available': group.capacity - active_students_count
         }
 
     # Calculate total used and available
@@ -435,11 +432,11 @@ async def update_group(
             detail="Identifier cannot be changed after group creation. Please create a new group if you need a different identifier."
         )
 
-    # Prevent birth_year from being changed (it's used in contract numbers)
+    # Prevent birth_year from being changed
     if "birth_year" in update_data and update_data["birth_year"] != group.birth_year:
         raise HTTPException(
             status_code=400,
-            detail="Birth year cannot be changed after group creation as it's used in contract numbers."
+            detail="Birth year cannot be changed after group creation."
         )
 
     # Remove identifier and birth_year from update_data to prevent any accidental changes
@@ -483,21 +480,16 @@ async def get_group_students(
     group_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Get only active students in a specific group (by active contracts)."""
+    """Get only active students in a specific group."""
     result = await db.execute(
         select(Student)
-        .join(
-            Contract,
-            and_(
-                Contract.student_id == Student.id,
-                Contract.group_id == group_id,
-                Contract.status == ContractStatus.ACTIVE,
-            ),
+        .where(
+            Student.group_id == group_id,
+            Student.status == StudentStatus.ACTIVE,
         )
-        .where(Student.status == StudentStatus.ACTIVE)
         .order_by(Student.last_name.asc(), Student.first_name.asc())
     )
-    students = result.scalars().unique().all()
+    students = result.scalars().all()
     return DataResponse(data=[StudentRead.model_validate(s) for s in students])
 
 
@@ -594,29 +586,23 @@ async def get_group_capacity(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    # Get active and expired contracts for this group (not terminated) for the archive year
-    contracts_result = await db.execute(
-        select(Contract).where(
+    # Get active students for this group for the archive year
+    students_result = await db.execute(
+        select(Student).where(
             and_(
-                Contract.group_id == group_id,
-                Contract.archive_year == archive_year,
-                or_(
-                    Contract.status == ContractStatus.ACTIVE,
-                    Contract.status == ContractStatus.EXPIRED
-                )
+                Student.group_id == group_id,
+                Student.archive_year == archive_year,
+                Student.status == StudentStatus.ACTIVE,
             )
         )
     )
-    contracts = contracts_result.scalars().all()
+    students = students_result.scalars().all()
+    active_students_count = len(students)
 
-    # Count active contracts
-    active_contracts_count = sum(1 for c in contracts if c.status == ContractStatus.ACTIVE)
-
-    # Group contracts by birth year
+    # Group students by birth year
     by_year = defaultdict(lambda: {"used": 0, "available": 0})
 
-    for contract in contracts:
-        by_year[contract.birth_year]["used"] += 1
+    by_year[group.birth_year]["used"] = active_students_count
 
     # Calculate available slots for each year
     for year_str in by_year:
@@ -638,72 +624,11 @@ async def get_group_capacity(
         group_id=group_id,
         group_name=group.name,
         capacity=group.capacity,
-        active_contracts=active_contracts_count,
-        available_slots=group.capacity - active_contracts_count,
+        active_students=active_students_count,
+        available_slots=group.capacity - active_students_count,
         waiting_list_count=waiting_count,
         by_birth_year=by_year_dict
     ))
-
-
-
-@router.get("/{group_id}/contracts", response_model=DataResponse[list[ContractRead]], dependencies=[Depends(require_permission(PERM_GROUPS_VIEW))])
-async def get_group_contracts(
-    group_id: int,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-):
-    """
-    Get active contracts for a specific group.
-
-    Returns only ACTIVE contracts associated with the given group ID,
-    ordered by most recent first.
-    """
-    # Verify group exists
-    group_result = await db.execute(select(Group).where(Group.id == group_id))
-    group = group_result.scalar_one_or_none()
-    if not group:
-        raise HTTPException(status_code=404, detail="Group not found")
-
-    # Build query
-    query = (
-        select(Contract)
-        .options(selectinload(Contract.terminated_by))
-        .where(
-            and_(
-                Contract.group_id == group_id,
-                Contract.status == ContractStatus.ACTIVE,
-            )
-        )
-    )
-
-    # Order by most recent first
-    query = query.order_by(Contract.created_at.desc())
-
-    # Pagination
-    offset = (page - 1) * page_size
-    result = await db.execute(query.offset(offset).limit(page_size))
-    contracts = result.scalars().all()
-
-    # Count total
-    count_query = select(func.count(Contract.id)).where(
-        and_(
-            Contract.group_id == group_id,
-            Contract.status == ContractStatus.ACTIVE,
-        )
-    )
-    count_result = await db.execute(count_query)
-    total = count_result.scalar()
-
-    return DataResponse(
-        data=[ContractRead.model_validate(c) for c in contracts],
-        meta=PaginationMeta(
-            page=page,
-            page_size=page_size,
-            total=total,
-            total_pages=(total + page_size - 1) // page_size,
-        ),
-    )
 
 
 @router.get("/{group_id}/export-students", dependencies=[Depends(require_permission(PERM_GROUPS_VIEW))])
@@ -724,26 +649,20 @@ async def export_group_students(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    # Get all active contracts for this group, ordered by sequence number
-    contracts_query = (
-        select(Contract, Student)
-        .join(Student, Contract.student_id == Student.id)
+    result = await db.execute(
+        select(Student)
         .where(
-            and_(
-                Contract.group_id == group_id,
-                Contract.status == ContractStatus.ACTIVE
-            )
+            Student.group_id == group_id,
+            Student.status == StudentStatus.ACTIVE,
         )
-        .order_by(Contract.sequence_number.asc())
+        .order_by(Student.last_name.asc(), Student.first_name.asc())
     )
+    students = result.scalars().all()
 
-    result = await db.execute(contracts_query)
-    contracts_with_students = result.all()
-
-    if not contracts_with_students:
+    if not students:
         raise HTTPException(
             status_code=404,
-            detail=f"No active contracts found for group {group.name}"
+            detail=f"No active students found for group {group.name}"
         )
 
     # Create Excel workbook
@@ -766,11 +685,12 @@ async def export_group_students(
 
     # Headers
     headers = [
-        'Contract Number',
+        'Student ID',
         'First Name',
         'Last Name',
-        'Start Date',
-        'End Date'
+        'PNFL',
+        'Phone',
+        'Status',
     ]
 
     for col_num, header in enumerate(headers, 1):
@@ -781,19 +701,13 @@ async def export_group_students(
         cell.alignment = header_alignment
 
     # Data rows
-    for row_num, (contract, student) in enumerate(contracts_with_students, 2):
-        # Contract number format: sequence-birth_year+identifier (e.g., 1-2030B2)
-        contract_number = f"{contract.sequence_number}-{contract.birth_year}{group.identifier}"
-
-        sheet.cell(row=row_num, column=1).value = contract_number
+    for row_num, student in enumerate(students, 2):
+        sheet.cell(row=row_num, column=1).value = student.id
         sheet.cell(row=row_num, column=2).value = student.first_name
         sheet.cell(row=row_num, column=3).value = student.last_name
-        sheet.cell(row=row_num, column=4).value = contract.start_date
-        sheet.cell(row=row_num, column=5).value = contract.end_date
-
-        # Format dates
-        sheet.cell(row=row_num, column=4).number_format = 'DD.MM.YYYY'
-        sheet.cell(row=row_num, column=5).number_format = 'DD.MM.YYYY'
+        sheet.cell(row=row_num, column=4).value = student.pnfl
+        sheet.cell(row=row_num, column=5).value = student.phone or ""
+        sheet.cell(row=row_num, column=6).value = student.status.value
 
     # Save to temporary file
     temp_dir = tempfile.gettempdir()

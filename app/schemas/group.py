@@ -56,7 +56,7 @@ class GroupRead(BaseModel):
     created_at: datetime
 
     # Optional stats - populated when requested
-    active_students_count: Optional[int] = Field(default=None, description="Number of active contracts in this group")
+    active_students_count: Optional[int] = Field(default=None, description="Number of active students in this group")
     waiting_list_count: Optional[int] = Field(default=None, description="Number of students waiting to join this group")
 
     class Config:
@@ -132,7 +132,7 @@ class GroupCapacityInfo(BaseModel):
     group_id: int
     group_name: str
     capacity: int
-    active_contracts: int
+    active_students: int
     available_slots: int
     waiting_list_count: int
     by_birth_year: Dict[str, GroupCapacityByYear]

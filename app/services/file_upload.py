@@ -62,7 +62,7 @@ class S3FileUploadService:
 
         Args:
             original_filename: Original file name
-            prefix: Optional prefix for the file path (e.g., "contracts/", "students/")
+            prefix: Optional prefix for the file path (e.g., "documents/", "students/")
 
         Returns:
             Unique filename with timestamp and UUID
@@ -94,7 +94,7 @@ class S3FileUploadService:
 
         Args:
             file: FastAPI UploadFile object
-            prefix: Optional prefix for the file path (e.g., "contracts/", "students/")
+            prefix: Optional prefix for the file path (e.g., "documents/", "students/")
             make_public: Make file publicly accessible (default: True)
 
         Returns:

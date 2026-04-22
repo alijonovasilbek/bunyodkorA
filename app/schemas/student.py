@@ -12,11 +12,11 @@ class StudentRead(BaseModel):
     height: int
     weight: int
     ampula: Optional[str] = None
+    millati: Optional[str] = None
     pnfl: str = Field(min_length=14, max_length=14)
     phone: Optional[str] = None
     address: Optional[str] = None
     photo_url: Optional[str] = None
-    face_id: Optional[str] = None
     status: StudentStatus
     group_id: Optional[int] = None
     created_at: datetime
@@ -32,11 +32,11 @@ class StudentCreate(BaseModel):
     height: int
     weight: int
     ampula: Optional[str] = None
+    millati: Optional[str] = None
     pnfl: str = Field(min_length=14, max_length=14)
     phone: Optional[str] = None
     address: Optional[str] = None
     photo_url: Optional[str] = None
-    face_id: Optional[str] = None
     status: StudentStatus = StudentStatus.ACTIVE
     group_id: Optional[int] = None
 
@@ -48,16 +48,14 @@ class StudentUpdate(BaseModel):
     height: Optional[int] = None
     weight: Optional[int] = None
     ampula: Optional[str] = None
+    millati: Optional[str] = None
     pnfl: Optional[str] = Field(default=None, min_length=14, max_length=14)
     phone: Optional[str] = None
     address: Optional[str] = None
     photo_url: Optional[str] = None
-    face_id: Optional[str] = None
     status: Optional[StudentStatus] = None
     group_id: Optional[int] = None
 
-# Import related schemas at the end to avoid circular imports
-from app.schemas.contract import ContractRead
 from app.schemas.attendance import AttendanceRead
 from app.schemas.group import GroupRead
 from app.schemas.auth import UserRead
@@ -66,8 +64,6 @@ from app.schemas.auth import UserRead
 class StudentFullInfo(BaseModel):
     """Complete student information including all related data"""
     student: StudentRead
-    contracts: list[ContractRead]
     group: Optional[GroupRead] = None
     coach: Optional[UserRead] = None
     attendances: list[AttendanceRead]
-    active_contracts_count: int = 0  # Number of active contracts

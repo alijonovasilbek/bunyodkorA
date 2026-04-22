@@ -1,9 +1,9 @@
 from datetime import date, datetime
-from sqlalchemy import String, Date, DateTime, Integer, Text, Enum as SAEnum, ForeignKey
+from sqlalchemy import String, Date, DateTime, Integer, Text, Enum as SAEnum, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.db import Base
 from app.models.base import TimestampMixin
-from app.models.enums import StudentStatus, ContractStatus, DayOfWeek, GroupStatus
+from app.models.enums import StudentStatus, DayOfWeek, GroupStatus
 
 
 class Student(Base, TimestampMixin):
@@ -16,6 +16,7 @@ class Student(Base, TimestampMixin):
     height: Mapped[int] = mapped_column(Integer, nullable=False)
     weight: Mapped[int] = mapped_column(Integer, nullable=False)
     ampula: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    millati: Mapped[str | None] = mapped_column(String(255), nullable=True)
     pnfl: Mapped[str] = mapped_column(String(14), unique=True, index=True, nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -31,7 +32,6 @@ class Student(Base, TimestampMixin):
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
 
     group: Mapped["Group"] = relationship("Group", back_populates="students")
-    contracts: Mapped[list["Contract"]] = relationship("Contract", back_populates="student", cascade="all, delete-orphan")
     attendances: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="student", cascade="all, delete-orphan")
     gate_logs: Mapped[list["GateLog"]] = relationship("GateLog", back_populates="student", cascade="all, delete-orphan")
 
@@ -63,51 +63,11 @@ class Group(Base, TimestampMixin):
     students: Mapped[list["Student"]] = relationship("Student", back_populates="group")
     sessions: Mapped[list["Session"]] = relationship("Session", back_populates="group")
     waiting_list: Mapped[list["WaitingList"]] = relationship("WaitingList", back_populates="group")
-
-
-class Contract(Base, TimestampMixin):
-    __tablename__ = "contracts"
-
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    contract_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
-    start_date: Mapped[date] = mapped_column(Date, nullable=False)
-    end_date: Mapped[date] = mapped_column(Date, nullable=False)
-    status: Mapped[ContractStatus] = mapped_column(
-        SAEnum(ContractStatus, native_enum=False, length=20), default=ContractStatus.ACTIVE, nullable=False
+    performance_tables: Mapped[list["GroupPerformanceTable"]] = relationship(
+        "GroupPerformanceTable",
+        back_populates="group",
+        cascade="all, delete-orphan",
     )
-
-    # Archive year - used for yearly data separation (2025, 2026, etc.)
-    archive_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True, server_default="2025")
-
-    # Contract number allocation fields
-    birth_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)  # Student birth year for contract numbering
-    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)  # Sequence within birth year (1-capacity)
-
-    # Document file paths (JSON array stored as text)
-    passport_copy_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    form_086_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # Medical certificate
-    heart_checkup_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    birth_certificate_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # Passport or birth certificate
-    contract_images_urls: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of 5 contract page URLs
-    final_pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # Merged PDF with all documents
-
-    # Editable fields (from handwritten parts)
-    custom_fields: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON object for custom fields
-
-    # Termination fields
-    terminated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    terminated_by_user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
-    )
-    termination_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
-    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
-
-    student: Mapped["Student"] = relationship("Student", back_populates="contracts")
-    group: Mapped["Group"] = relationship("Group")
-    terminated_by: Mapped["User"] = relationship("User", foreign_keys=[terminated_by_user_id])
-
 
 class WaitingList(Base, TimestampMixin):
     """
@@ -151,3 +111,70 @@ class PresidentDocument(Base, TimestampMixin):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     image_keys: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array of S3 object keys
     document_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class GroupPerformanceTable(Base, TimestampMixin):
+    __tablename__ = "group_performance_tables"
+    __table_args__ = (
+        UniqueConstraint("group_id", "season_year", name="uq_group_performance_table_group_year"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    season_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    group: Mapped["Group"] = relationship("Group", back_populates="performance_tables")
+    created_by: Mapped["User"] = relationship("User", foreign_keys=[created_by_user_id])
+    updated_by: Mapped["User"] = relationship("User", foreign_keys=[updated_by_user_id])
+    matches: Mapped[list["GroupPerformanceMatch"]] = relationship(
+        "GroupPerformanceMatch",
+        back_populates="table",
+        cascade="all, delete-orphan",
+        order_by="GroupPerformanceMatch.position",
+    )
+    cells: Mapped[list["GroupPerformanceCell"]] = relationship(
+        "GroupPerformanceCell",
+        back_populates="table",
+        cascade="all, delete-orphan",
+    )
+
+
+class GroupPerformanceMatch(Base, TimestampMixin):
+    __tablename__ = "group_performance_matches"
+    __table_args__ = (
+        UniqueConstraint("table_id", "position", name="uq_group_performance_match_table_position"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    table_id: Mapped[int] = mapped_column(ForeignKey("group_performance_tables.id", ondelete="CASCADE"), nullable=False, index=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    tour_label: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    match_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    opponent: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    table: Mapped["GroupPerformanceTable"] = relationship("GroupPerformanceTable", back_populates="matches")
+    cells: Mapped[list["GroupPerformanceCell"]] = relationship(
+        "GroupPerformanceCell",
+        back_populates="match",
+        cascade="all, delete-orphan",
+    )
+
+
+class GroupPerformanceCell(Base, TimestampMixin):
+    __tablename__ = "group_performance_cells"
+    __table_args__ = (
+        UniqueConstraint("match_id", "student_id", name="uq_group_performance_cell_match_student"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    table_id: Mapped[int] = mapped_column(ForeignKey("group_performance_tables.id", ondelete="CASCADE"), nullable=False, index=True)
+    match_id: Mapped[int] = mapped_column(ForeignKey("group_performance_matches.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    table: Mapped["GroupPerformanceTable"] = relationship("GroupPerformanceTable", back_populates="cells")
+    match: Mapped["GroupPerformanceMatch"] = relationship("GroupPerformanceMatch", back_populates="cells")
+    student: Mapped["Student"] = relationship("Student")

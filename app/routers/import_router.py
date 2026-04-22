@@ -9,8 +9,8 @@ from app.core.db import get_db
 from app.core.permissions import PERM_STUDENTS_EDIT
 from app.schemas.common import DataResponse
 from app.deps import require_permission
-from app.models.domain import Student, Contract, Group
-from app.models.enums import StudentStatus, ContractStatus
+from app.models.domain import Student, Group
+from app.models.enums import StudentStatus
 
 router = APIRouter(prefix="/import", tags=["Import"])
 
@@ -21,7 +21,7 @@ async def import_students(
     db: Annotated[AsyncSession, Depends(get_db)] = None,
 ):
     """
-    Import students from Excel file with all related data.
+    Import students from Excel file.
 
     Expected columns:
     - first_name: Student first name (required)
@@ -30,15 +30,12 @@ async def import_students(
     - height: Student height (required)
     - weight: Student weight (required)
     - ampula: Student ampula/position
+    - millati: Student nationality
     - pnfl: Unique 14-digit PNFL (required)
     - phone: Student phone number
     - address: Student address
-    - face_id: Unique face ID
     - status: ACTIVE, INACTIVE, GRADUATED, EXPELLED (default: ACTIVE)
     - group_name: Name of the group to assign student to
-    - contract_number: Unique contract number
-    - contract_start_date: Format YYYY-MM-DD
-    - contract_end_date: Format YYYY-MM-DD
     """
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Only Excel files (.xlsx, .xls) are supported")
@@ -102,14 +99,6 @@ async def import_students(
                 if existing_pnfl.scalar_one_or_none():
                     raise ValueError(f"PNFL {pnfl} already exists")
 
-                # Check if face_id already exists
-                if row_data.get('face_id'):
-                    existing_face_id = await db.execute(
-                        select(Student).where(Student.face_id == row_data['face_id'])
-                    )
-                    if existing_face_id.scalar_one_or_none():
-                        raise ValueError(f"Face ID {row_data['face_id']} already exists")
-
                 # Get or find group
                 group_id = None
                 if row_data.get('group_name'):
@@ -137,59 +126,15 @@ async def import_students(
                     height=height,
                     weight=weight,
                     ampula=row_data.get('ampula'),
+                    millati=row_data.get('millati'),
                     pnfl=pnfl,
                     phone=row_data.get('phone'),
                     address=row_data.get('address'),
-                    face_id=row_data.get('face_id'),
                     status=student_status,
                     group_id=group_id,
                 )
                 db.add(student)
                 await db.flush()  # Get student ID
-
-                # Create contract if data provided
-                if row_data.get('contract_number'):
-                    # Check if contract number already exists
-                    existing_contract = await db.execute(
-                        select(Contract).where(Contract.contract_number == row_data['contract_number'])
-                    )
-                    if existing_contract.scalar_one_or_none():
-                        raise ValueError(f"Contract number {row_data['contract_number']} already exists")
-
-                    # Check if student already has active contract
-                    active_contract = await db.execute(
-                        select(Contract).where(
-                            Contract.student_id == student.id,
-                            Contract.status == ContractStatus.ACTIVE
-                        )
-                    )
-                    if active_contract.scalar_one_or_none():
-                        raise ValueError(f"Student {student.first_name} {student.last_name} already has an active contract")
-
-                    # Parse contract dates
-                    contract_start = row_data.get('contract_start_date')
-                    if isinstance(contract_start, str):
-                        contract_start = datetime.strptime(contract_start, '%Y-%m-%d').date()
-                    elif isinstance(contract_start, datetime):
-                        contract_start = contract_start.date()
-
-                    contract_end = row_data.get('contract_end_date')
-                    if isinstance(contract_end, str):
-                        contract_end = datetime.strptime(contract_end, '%Y-%m-%d').date()
-                    elif isinstance(contract_end, datetime):
-                        contract_end = contract_end.date()
-
-                    if not contract_start or not contract_end:
-                        raise ValueError(f"Contract dates required for contract {row_data['contract_number']}")
-
-                    contract = Contract(
-                        contract_number=row_data['contract_number'],
-                        start_date=contract_start,
-                        end_date=contract_end,
-                        status=ContractStatus.ACTIVE,
-                        student_id=student.id,
-                    )
-                    db.add(contract)
 
                 await db.commit()
                 success_count += 1

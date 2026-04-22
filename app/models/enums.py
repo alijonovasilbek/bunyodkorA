@@ -22,14 +22,6 @@ class GroupStatus(str, Enum):
     ARCHIVED = "archived"
 
 
-class ContractStatus(str, Enum):
-    ACTIVE = "active"
-    EXPIRED = "expired"
-    TERMINATED = "terminated"
-    DELETED = "deleted"
-    ARCHIVED = "archived"
-
-
 class PaymentStatus(str, Enum):
     PENDING = "pending"
     SUCCESS = "success"

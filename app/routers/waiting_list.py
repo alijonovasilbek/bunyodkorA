@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from app.core.db import get_db
-from app.core.permissions import PERM_CONTRACTS_EDIT, PERM_CONTRACTS_VIEW
+from app.core.permissions import PERM_GROUPS_EDIT, PERM_GROUPS_VIEW
 from app.models.domain import WaitingList, Group
 from app.schemas.waiting_list import WaitingListCreate, WaitingListUpdate, WaitingListRead
 from app.schemas.common import DataResponse, PaginationMeta
@@ -13,7 +13,7 @@ from app.models.auth import User
 router = APIRouter(prefix="/waiting-list", tags=["Waiting List"])
 
 
-@router.get("", response_model=DataResponse[list[WaitingListRead]], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
+@router.get("", response_model=DataResponse[list[WaitingListRead]], dependencies=[Depends(require_permission(PERM_GROUPS_VIEW))])
 async def get_waiting_list(
     db: Annotated[AsyncSession, Depends(get_db)],
     group_id: Optional[int] = None,
@@ -64,7 +64,7 @@ async def get_waiting_list(
 @router.post("", response_model=DataResponse[WaitingListRead])
 async def add_to_waiting_list(
     data: WaitingListCreate,
-    user: Annotated[User, Depends(require_permission(PERM_CONTRACTS_EDIT))],
+    user: Annotated[User, Depends(require_permission(PERM_GROUPS_EDIT))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
@@ -132,7 +132,7 @@ async def add_to_waiting_list(
     return DataResponse(data=WaitingListRead.model_validate(waiting_entry))
 
 
-@router.get("/{waiting_id}", response_model=DataResponse[WaitingListRead], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
+@router.get("/{waiting_id}", response_model=DataResponse[WaitingListRead], dependencies=[Depends(require_permission(PERM_GROUPS_VIEW))])
 async def get_waiting_list_entry(
     waiting_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -147,7 +147,7 @@ async def get_waiting_list_entry(
     return DataResponse(data=WaitingListRead.model_validate(waiting_entry))
 
 
-@router.patch("/{waiting_id}", response_model=DataResponse[WaitingListRead], dependencies=[Depends(require_permission(PERM_CONTRACTS_EDIT))])
+@router.patch("/{waiting_id}", response_model=DataResponse[WaitingListRead], dependencies=[Depends(require_permission(PERM_GROUPS_EDIT))])
 async def update_waiting_list_entry(
     waiting_id: int,
     data: WaitingListUpdate,
@@ -174,7 +174,7 @@ async def update_waiting_list_entry(
     return DataResponse(data=WaitingListRead.model_validate(waiting_entry))
 
 
-@router.delete("/{waiting_id}", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_CONTRACTS_EDIT))])
+@router.delete("/{waiting_id}", response_model=DataResponse[dict], dependencies=[Depends(require_permission(PERM_GROUPS_EDIT))])
 async def remove_from_waiting_list(
     waiting_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -199,7 +199,7 @@ async def remove_from_waiting_list(
     return DataResponse(data={"message": "Student removed from waiting list successfully"})
 
 
-@router.get("/group/{group_id}/next", response_model=DataResponse[WaitingListRead | None], dependencies=[Depends(require_permission(PERM_CONTRACTS_VIEW))])
+@router.get("/group/{group_id}/next", response_model=DataResponse[WaitingListRead | None], dependencies=[Depends(require_permission(PERM_GROUPS_VIEW))])
 async def get_next_in_queue(
     group_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
