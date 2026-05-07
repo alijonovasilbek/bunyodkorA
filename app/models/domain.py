@@ -2,6 +2,7 @@ from datetime import date, datetime
 from sqlalchemy import String, Date, DateTime, Integer, Text, Enum as SAEnum, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.db import Base
+from app.core.private_files import generate_private_file_token
 from app.models.base import TimestampMixin
 from app.models.enums import StudentStatus, DayOfWeek, GroupStatus
 
@@ -21,6 +22,8 @@ class Student(Base, TimestampMixin):
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    extra_file_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    passport_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     face_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     status: Mapped[StudentStatus] = mapped_column(
         SAEnum(StudentStatus, native_enum=False, length=20), default=StudentStatus.ACTIVE, nullable=False
@@ -34,6 +37,18 @@ class Student(Base, TimestampMixin):
     group: Mapped["Group"] = relationship("Group", back_populates="students")
     attendances: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="student", cascade="all, delete-orphan")
     gate_logs: Mapped[list["GateLog"]] = relationship("GateLog", back_populates="student", cascade="all, delete-orphan")
+
+    @property
+    def extra_file_url(self) -> str | None:
+        if not self.extra_file_key:
+            return None
+        return f"/students/files/{generate_private_file_token(self.extra_file_key)}"
+
+    @property
+    def passport_url(self) -> str | None:
+        if not self.passport_key:
+            return None
+        return f"/students/files/{generate_private_file_token(self.passport_key)}"
 
 
 class Group(Base, TimestampMixin):

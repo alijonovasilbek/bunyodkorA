@@ -12,6 +12,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from app.core.db import get_db
 from app.core.permissions import PERM_STUDENTS_VIEW, PERM_STUDENTS_EDIT, PERM_ATTENDANCE_VIEW
+from app.core.private_files import verify_private_file_token
 from app.models.domain import Student
 from app.models.attendance import Attendance, GateLog, Session
 from app.models.enums import StudentStatus
@@ -20,9 +21,21 @@ from app.schemas.attendance import AttendanceRead, GateLogRead
 from app.schemas.common import DataResponse, PaginationMeta
 from app.deps import require_permission, CurrentUser
 from app.models.auth import User
-from app.core.s3 import upload_image_to_s3
+from app.core.s3 import download_s3_object, upload_image_to_s3, upload_private_file_to_s3
 
 router = APIRouter(prefix="/students", tags=["Students"])
+
+
+def serialize_student(student: Student) -> StudentRead:
+    return StudentRead.model_validate(student)
+
+
+def raise_student_file_upload_error(exc: Exception) -> None:
+    detail = str(exc)
+    lowered = detail.lower()
+    if "unsupported" in lowered or "validation" in lowered or "invalid" in lowered:
+        raise HTTPException(status_code=400, detail=detail) from exc
+    raise HTTPException(status_code=500, detail=detail) from exc
 
 
 def build_student_create_form(
@@ -133,7 +146,7 @@ async def search_students(
     total = count_result.scalar() or 0
 
     return DataResponse(
-        data=[StudentRead.model_validate(s) for s in students],
+        data=[serialize_student(s) for s in students],
         meta=PaginationMeta(
             page=page,
             page_size=page_size,
@@ -220,7 +233,7 @@ async def get_students(
     total = count_result.scalar()
 
     return DataResponse(
-        data=[StudentRead.model_validate(s) for s in students],
+        data=[serialize_student(s) for s in students],
         meta=PaginationMeta(
             page=page,
             page_size=page_size,
@@ -392,9 +405,18 @@ async def create_student(
     db: Annotated[AsyncSession, Depends(get_db)],
     student_payload: Annotated[StudentCreate, Depends(build_student_create_form)],
     photo: UploadFile | None = File(None, description="Optional student profile image"),
+    passport: UploadFile | None = File(None, description="Optional student passport file"),
+    extra_file: UploadFile | None = File(None, description="Optional extra student file"),
 ):
-    if photo is not None:
-        student_payload.photo_url = await upload_image_to_s3(photo, folder="student-profil-images")
+    try:
+        if photo is not None:
+            student_payload.photo_url = await upload_image_to_s3(photo, folder="student-profil-images")
+        if passport is not None:
+            student_payload.passport_key = await upload_private_file_to_s3(passport, folder="student-passports")
+        if extra_file is not None:
+            student_payload.extra_file_key = await upload_private_file_to_s3(extra_file, folder="student-extra-files")
+    except Exception as exc:
+        raise_student_file_upload_error(exc)
 
     student_payload.status = StudentStatus.ACTIVE
 
@@ -430,7 +452,7 @@ async def create_student(
     db.add(student)
     await db.commit()
     await db.refresh(student)
-    return DataResponse(data=StudentRead.model_validate(student))
+    return DataResponse(data=serialize_student(student))
 
 @router.get("/{student_id}", response_model=DataResponse[StudentRead], dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
 async def get_student(
@@ -443,7 +465,7 @@ async def get_student(
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    return DataResponse(data=StudentRead.model_validate(student))
+    return DataResponse(data=serialize_student(student))
 
 
 @router.get("/fullinfo/{student_id}", response_model=DataResponse[StudentFullInfo], dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
@@ -492,7 +514,7 @@ async def get_student_full_info(
     from app.schemas.auth import UserRead
 
     full_info = StudentFullInfo(
-        student=StudentRead.model_validate(student),
+        student=serialize_student(student),
         group=GroupRead.model_validate(group) if group else None,
         coach=UserRead.model_validate(coach) if coach else None,
         attendances=[AttendanceRead.model_validate(a) for a in attendances],
@@ -507,6 +529,8 @@ async def update_student(
     db: Annotated[AsyncSession, Depends(get_db)],
     student_update: Annotated[StudentUpdate, Depends(build_student_update_form)],
     photo: UploadFile | None = File(None, description="Optional student profile image"),
+    passport: UploadFile | None = File(None, description="Optional student passport file"),
+    extra_file: UploadFile | None = File(None, description="Optional extra student file"),
 ):
     result = await db.execute(select(Student).where(Student.id == student_id))
     student = result.scalar_one_or_none()
@@ -516,8 +540,15 @@ async def update_student(
 
     update_data = student_update.model_dump(exclude_unset=True)
 
-    if photo is not None:
-        update_data["photo_url"] = await upload_image_to_s3(photo, folder="student-profil-images")
+    try:
+        if photo is not None:
+            update_data["photo_url"] = await upload_image_to_s3(photo, folder="student-profil-images")
+        if passport is not None:
+            update_data["passport_key"] = await upload_private_file_to_s3(passport, folder="student-passports")
+        if extra_file is not None:
+            update_data["extra_file_key"] = await upload_private_file_to_s3(extra_file, folder="student-extra-files")
+    except Exception as exc:
+        raise_student_file_upload_error(exc)
 
     # Prevent changing student's group once assigned
     if "group_id" in update_data and student.group_id is not None:
@@ -581,7 +612,7 @@ async def update_student(
 
     await db.commit()
     await db.refresh(student)
-    return DataResponse(data=StudentRead.model_validate(student))
+    return DataResponse(data=serialize_student(student))
 
 
 @router.post("/{student_id}/photo", response_model=DataResponse[StudentRead], dependencies=[Depends(require_permission(PERM_STUDENTS_EDIT))])
@@ -595,10 +626,70 @@ async def upload_student_photo(
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    student.photo_url = await upload_image_to_s3(photo, folder="student-profil-images")
+    try:
+        student.photo_url = await upload_image_to_s3(photo, folder="student-profil-images")
+    except Exception as exc:
+        raise_student_file_upload_error(exc)
     await db.commit()
     await db.refresh(student)
-    return DataResponse(data=StudentRead.model_validate(student))
+    return DataResponse(data=serialize_student(student))
+
+
+@router.post("/{student_id}/passport", response_model=DataResponse[StudentRead], dependencies=[Depends(require_permission(PERM_STUDENTS_EDIT))])
+async def upload_student_passport(
+    student_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    passport: UploadFile = File(..., description="Student passport file"),
+):
+    result = await db.execute(select(Student).where(Student.id == student_id))
+    student = result.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    try:
+        student.passport_key = await upload_private_file_to_s3(passport, folder="student-passports")
+    except Exception as exc:
+        raise_student_file_upload_error(exc)
+    await db.commit()
+    await db.refresh(student)
+    return DataResponse(data=serialize_student(student))
+
+
+@router.post("/{student_id}/extra-file", response_model=DataResponse[StudentRead], dependencies=[Depends(require_permission(PERM_STUDENTS_EDIT))])
+async def upload_student_extra_file(
+    student_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    extra_file: UploadFile = File(..., description="Student extra file"),
+):
+    result = await db.execute(select(Student).where(Student.id == student_id))
+    student = result.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    try:
+        student.extra_file_key = await upload_private_file_to_s3(extra_file, folder="student-extra-files")
+    except Exception as exc:
+        raise_student_file_upload_error(exc)
+    await db.commit()
+    await db.refresh(student)
+    return DataResponse(data=serialize_student(student))
+
+
+@router.get("/files/{token}", include_in_schema=False)
+async def get_student_file(token: str):
+    payload = verify_private_file_token(token)
+    key = payload["key"]
+
+    try:
+        file_bytes, content_type = await download_s3_object(key)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"File not found: {str(exc)}") from exc
+
+    filename = key.rsplit("/", 1)[-1]
+    media_type = content_type or "application/octet-stream"
+    disposition = "inline" if media_type.startswith("image/") or media_type == "application/pdf" else "attachment"
+    headers = {"Content-Disposition": f'{disposition}; filename="{filename}"'}
+    return StreamingResponse(iter([file_bytes]), media_type=media_type, headers=headers)
 
 
 '''

@@ -355,14 +355,15 @@ def generate_signed_url(value: str, expires_seconds: int = 180) -> str:
         raise Exception(f"Signed URL error: {str(e)}")
 
 
-async def upload_private_document_to_s3(file: UploadFile, folder: str = "president_documents") -> str:
+async def upload_private_file_to_s3(
+    file: UploadFile,
+    folder: str,
+    allowed_extensions: set[str] | None = None,
+) -> str:
     """
-    Upload a private document to S3 and return the stored object key.
+    Upload a private file to S3 and return the stored object key.
 
-    Supported formats:
-    - PDF
-    - DOC
-    - DOCX
+    By default supports common document and image formats used by student attachments.
     """
     import asyncio
 
@@ -371,9 +372,21 @@ async def upload_private_document_to_s3(file: UploadFile, folder: str = "preside
 
     folder = remap_s3_folder(folder)
     extension = os.path.splitext(file.filename or "")[1].lower()
-    allowed_extensions = {".pdf", ".doc", ".docx"}
+    allowed_extensions = allowed_extensions or {
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".gif",
+        ".bmp",
+    }
     if extension not in allowed_extensions:
-        raise Exception("Unsupported document format. Allowed formats: PDF, DOC, DOCX")
+        raise Exception(
+            "Unsupported file format. Allowed formats: PDF, DOC, DOCX, PNG, JPG, JPEG, WEBP, GIF, BMP"
+        )
 
     content = await file.read()
     content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "application/octet-stream"
@@ -390,6 +403,22 @@ async def upload_private_document_to_s3(file: UploadFile, folder: str = "preside
 
     await asyncio.to_thread(_upload)
     return key
+
+
+async def upload_private_document_to_s3(file: UploadFile, folder: str = "president_documents") -> str:
+    """
+    Upload a private document to S3 and return the stored object key.
+
+    Supported formats:
+    - PDF
+    - DOC
+    - DOCX
+    """
+    return await upload_private_file_to_s3(
+        file=file,
+        folder=folder,
+        allowed_extensions={".pdf", ".doc", ".docx"},
+    )
 
 
 async def download_s3_object(key: str) -> tuple[bytes, str | None]:

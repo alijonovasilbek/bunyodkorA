@@ -17,6 +17,8 @@ class StudentRead(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     photo_url: Optional[str] = None
+    extra_file_url: Optional[str] = None
+    passport_url: Optional[str] = None
     status: StudentStatus
     group_id: Optional[int] = None
     created_at: datetime
@@ -37,6 +39,8 @@ class StudentCreate(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     photo_url: Optional[str] = None
+    extra_file_key: Optional[str] = None
+    passport_key: Optional[str] = None
     status: StudentStatus = StudentStatus.ACTIVE
     group_id: Optional[int] = None
 
@@ -53,6 +57,8 @@ class StudentUpdate(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     photo_url: Optional[str] = None
+    extra_file_key: Optional[str] = None
+    passport_key: Optional[str] = None
     status: Optional[StudentStatus] = None
     group_id: Optional[int] = None
 
