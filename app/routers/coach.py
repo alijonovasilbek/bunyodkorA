@@ -1,5 +1,6 @@
 from typing import Annotated, Optional
-from datetime import date
+from datetime import date, datetime
+import calendar
 from io import BytesIO
 import re
 from urllib.parse import quote
@@ -10,9 +11,10 @@ from sqlalchemy import select, and_, func, delete
 from sqlalchemy.orm import selectinload
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from app.models.enums import AttendanceStatus, StudentStatus
+from app.models.enums import AttendanceStatus, StudentStatus, CoachDocType
 from app.core.db import get_db
-from app.core.permissions import PERM_ATTENDANCE_COACH_MARK
+from app.core.permissions import PERM_ATTENDANCE_COACH_MARK, PERM_COACH_DOCUMENTS_UPLOAD
+from app.core.private_files import generate_private_file_token
 from app.models.domain import (
     Group,
     Student,
@@ -20,8 +22,9 @@ from app.models.domain import (
     GroupPerformanceTable,
     GroupPerformanceMatch,
     GroupPerformanceCell,
+    GroupGame,
 )
-from app.models.attendance import Session, Attendance
+from app.models.attendance import Session, Attendance, CoachMonthlyDocument, GameDocument
 from app.schemas.group import GroupRead
 from app.schemas.attendance import (
     SessionRead, SessionCreate, AttendanceCreate, SessionWithAttendances,
@@ -36,9 +39,17 @@ from app.schemas.performance_table import (
     PerformanceColumnUpdate,
     PerformanceColumnReorder,
 )
+from app.schemas.coach_document import (
+    CoachMonthlyDocumentRead,
+    CoachMonthlyStatusResponse,
+    MonthlyWindowInfo,
+    GroupMonthlyStatus,
+)
+from app.schemas.game import GameRead, GameDocumentRead
 from app.schemas.common import DataResponse
 from app.deps import require_permission, CurrentUser
 from app.services.file_upload import file_upload_service
+from app.core.s3 import upload_private_file_to_s3
 
 router = APIRouter(prefix="/coach", tags=["Coach"])
 
@@ -1048,3 +1059,327 @@ async def upload_konspekt(
             status_code=500,
             detail=f"Failed to upload file: {str(e)}"
         )
+
+
+# ─── Monthly plan / report helpers ───────────────────────────────────────────
+
+def _plan_window(year: int, month: int) -> tuple[int, int]:
+    """Returns (start_day, end_day) for plan upload window — days 1-7."""
+    return 1, 7
+
+
+def _report_window(year: int, month: int) -> tuple[int, int]:
+    """Returns (start_day, end_day) for report upload window — last 7 days."""
+    last_day = calendar.monthrange(year, month)[1]
+    return last_day - 6, last_day
+
+
+def _check_upload_window(doc_type: CoachDocType, year: int, month: int, today: date) -> None:
+    if doc_type == CoachDocType.PLAN:
+        start, end = _plan_window(year, month)
+        if not (start <= today.day <= end):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Plan faqat oyning {start}-{end}-kunlari orasida yuklanishi mumkin. Hozirgi kun: {today.day}."
+            )
+    else:
+        start, end = _report_window(year, month)
+        if not (start <= today.day <= end):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Hisobot faqat oyning {start}-{end}-kunlari orasida yuklanishi mumkin. Hozirgi kun: {today.day}."
+            )
+
+
+def _doc_to_read(doc: CoachMonthlyDocument) -> CoachMonthlyDocumentRead:
+    return CoachMonthlyDocumentRead(
+        id=doc.id,
+        coach_id=doc.coach_id,
+        group_id=doc.group_id,
+        year=doc.year,
+        month=doc.month,
+        doc_type=doc.doc_type,
+        file_url=f"/students/files/{generate_private_file_token(doc.file_key)}",
+        created_at=doc.created_at,
+        updated_at=doc.updated_at,
+    )
+
+
+# ─── Monthly plan / report endpoints ─────────────────────────────────────────
+
+@router.post(
+    "/groups/{group_id}/monthly-plan",
+    response_model=DataResponse[CoachMonthlyDocumentRead],
+    dependencies=[Depends(require_permission(PERM_COACH_DOCUMENTS_UPLOAD))],
+)
+async def upload_monthly_plan(
+    group_id: int,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    file: UploadFile = File(..., description="Plan file (pdf/doc/docx/png/jpg)"),
+):
+    """Upload monthly plan for a group. Allowed only during days 1-7 of the month."""
+    today = date.today()
+    _check_upload_window(CoachDocType.PLAN, today.year, today.month, today)
+    await _get_coach_group_or_404(db, user.id, group_id)
+
+    file_key = await upload_private_file_to_s3(file, folder="coach-monthly-plans")
+
+    existing = await db.execute(
+        select(CoachMonthlyDocument).where(
+            CoachMonthlyDocument.coach_id == user.id,
+            CoachMonthlyDocument.group_id == group_id,
+            CoachMonthlyDocument.year == today.year,
+            CoachMonthlyDocument.month == today.month,
+            CoachMonthlyDocument.doc_type == CoachDocType.PLAN,
+        )
+    )
+    doc = existing.scalar_one_or_none()
+
+    if doc:
+        doc.file_key = file_key
+    else:
+        doc = CoachMonthlyDocument(
+            coach_id=user.id,
+            group_id=group_id,
+            year=today.year,
+            month=today.month,
+            doc_type=CoachDocType.PLAN,
+            file_key=file_key,
+        )
+        db.add(doc)
+
+    await db.commit()
+    await db.refresh(doc)
+    return DataResponse(data=_doc_to_read(doc))
+
+
+@router.post(
+    "/groups/{group_id}/monthly-report",
+    response_model=DataResponse[CoachMonthlyDocumentRead],
+    dependencies=[Depends(require_permission(PERM_COACH_DOCUMENTS_UPLOAD))],
+)
+async def upload_monthly_report(
+    group_id: int,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    file: UploadFile = File(..., description="Report file (pdf/doc/docx/png/jpg)"),
+):
+    """Upload monthly report for a group. Allowed only during the last 7 days of the month."""
+    today = date.today()
+    _check_upload_window(CoachDocType.REPORT, today.year, today.month, today)
+    await _get_coach_group_or_404(db, user.id, group_id)
+
+    file_key = await upload_private_file_to_s3(file, folder="coach-monthly-reports")
+
+    existing = await db.execute(
+        select(CoachMonthlyDocument).where(
+            CoachMonthlyDocument.coach_id == user.id,
+            CoachMonthlyDocument.group_id == group_id,
+            CoachMonthlyDocument.year == today.year,
+            CoachMonthlyDocument.month == today.month,
+            CoachMonthlyDocument.doc_type == CoachDocType.REPORT,
+        )
+    )
+    doc = existing.scalar_one_or_none()
+
+    if doc:
+        doc.file_key = file_key
+    else:
+        doc = CoachMonthlyDocument(
+            coach_id=user.id,
+            group_id=group_id,
+            year=today.year,
+            month=today.month,
+            doc_type=CoachDocType.REPORT,
+            file_key=file_key,
+        )
+        db.add(doc)
+
+    await db.commit()
+    await db.refresh(doc)
+    return DataResponse(data=_doc_to_read(doc))
+
+
+@router.get(
+    "/monthly-status",
+    response_model=DataResponse[CoachMonthlyStatusResponse],
+    dependencies=[Depends(require_permission(PERM_COACH_DOCUMENTS_UPLOAD))],
+)
+async def get_monthly_status(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    year: int = Query(None),
+    month: int = Query(None),
+):
+    """Coach o'zining joriy oy plan/hisobot holati va barcha guruhlar uchun."""
+    today = date.today()
+    year = year or today.year
+    month = month or today.month
+
+    plan_start, plan_end = _plan_window(year, month)
+    report_start, report_end = _report_window(year, month)
+
+    groups_result = await db.execute(
+        select(Group).where(
+            Group.coach_id == user.id,
+            Group.status != GroupStatus.DELETED,
+        )
+    )
+    groups = groups_result.scalars().all()
+
+    docs_result = await db.execute(
+        select(CoachMonthlyDocument).where(
+            CoachMonthlyDocument.coach_id == user.id,
+            CoachMonthlyDocument.year == year,
+            CoachMonthlyDocument.month == month,
+        )
+    )
+    docs = docs_result.scalars().all()
+
+    uploaded = {(d.group_id, d.doc_type) for d in docs}
+
+    group_statuses = [
+        GroupMonthlyStatus(
+            group_id=g.id,
+            group_name=g.name,
+            plan_uploaded=(g.id, CoachDocType.PLAN) in uploaded,
+            report_uploaded=(g.id, CoachDocType.REPORT) in uploaded,
+        )
+        for g in groups
+    ]
+
+    return DataResponse(data=CoachMonthlyStatusResponse(
+        year=year,
+        month=month,
+        plan_window=MonthlyWindowInfo(start_day=plan_start, end_day=plan_end, is_open=plan_start <= today.day <= plan_end),
+        report_window=MonthlyWindowInfo(start_day=report_start, end_day=report_end, is_open=report_start <= today.day <= report_end),
+        groups=group_statuses,
+    ))
+
+
+# ─── Group Games ──────────────────────────────────────────────────────────────
+
+@router.get(
+    "/games",
+    response_model=DataResponse[list[GameRead]],
+    dependencies=[Depends(require_permission(PERM_ATTENDANCE_COACH_MARK))],
+)
+async def get_coach_games(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    group_id: Optional[int] = Query(None),
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+):
+    """Coach o'ziga tegishli guruhlarning o'yinlarini ko'radi."""
+    query = (
+        select(GroupGame)
+        .join(Group)
+        .where(Group.coach_id == user.id, Group.status != GroupStatus.DELETED)
+        .order_by(GroupGame.game_date.desc())
+    )
+    if group_id:
+        query = query.where(GroupGame.group_id == group_id)
+    if from_date:
+        query = query.where(GroupGame.game_date >= from_date)
+    if to_date:
+        query = query.where(GroupGame.game_date <= to_date)
+
+    games = (await db.execute(query)).scalars().all()
+    return DataResponse(data=[GameRead.model_validate(g) for g in games])
+
+
+@router.get(
+    "/games/{game_id}",
+    response_model=DataResponse[GameRead],
+    dependencies=[Depends(require_permission(PERM_ATTENDANCE_COACH_MARK))],
+)
+async def get_coach_game(
+    game_id: int,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(
+        select(GroupGame)
+        .join(Group)
+        .where(GroupGame.id == game_id, Group.coach_id == user.id, Group.status != GroupStatus.DELETED)
+    )
+    game = result.scalar_one_or_none()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found or not assigned to you")
+    return DataResponse(data=GameRead.model_validate(game))
+
+
+async def _upload_game_document(
+    game_id: int,
+    user_id: int,
+    doc_type: CoachDocType,
+    file: UploadFile,
+    db: AsyncSession,
+) -> GameDocumentRead:
+    game_result = await db.execute(
+        select(GroupGame)
+        .join(Group)
+        .where(GroupGame.id == game_id, Group.coach_id == user_id, Group.status != GroupStatus.DELETED)
+    )
+    if not game_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Game not found or not assigned to you")
+
+    file_key = await upload_private_file_to_s3(file, folder="game-documents")
+
+    existing = await db.execute(
+        select(GameDocument).where(
+            GameDocument.game_id == game_id,
+            GameDocument.coach_id == user_id,
+            GameDocument.doc_type == doc_type,
+        )
+    )
+    doc = existing.scalar_one_or_none()
+
+    if doc:
+        doc.file_key = file_key
+    else:
+        doc = GameDocument(
+            game_id=game_id,
+            coach_id=user_id,
+            doc_type=doc_type,
+            file_key=file_key,
+        )
+        db.add(doc)
+
+    await db.commit()
+    await db.refresh(doc)
+    return GameDocumentRead.model_validate(doc)
+
+
+@router.post(
+    "/games/{game_id}/plan",
+    response_model=DataResponse[GameDocumentRead],
+    dependencies=[Depends(require_permission(PERM_COACH_DOCUMENTS_UPLOAD))],
+)
+async def upload_game_plan(
+    game_id: int,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    file: UploadFile = File(..., description="Plan file (pdf/doc/docx/png/jpg)"),
+):
+    """O'yin uchun plan yuklash."""
+    doc = await _upload_game_document(game_id, user.id, CoachDocType.PLAN, file, db)
+    return DataResponse(data=doc)
+
+
+@router.post(
+    "/games/{game_id}/report",
+    response_model=DataResponse[GameDocumentRead],
+    dependencies=[Depends(require_permission(PERM_COACH_DOCUMENTS_UPLOAD))],
+)
+async def upload_game_report(
+    game_id: int,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    file: UploadFile = File(..., description="Report file (pdf/doc/docx/png/jpg)"),
+):
+    """O'yin uchun hisobot yuklash."""
+    doc = await _upload_game_document(game_id, user.id, CoachDocType.REPORT, file, db)
+    return DataResponse(data=doc)

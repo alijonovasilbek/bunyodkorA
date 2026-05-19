@@ -1,10 +1,12 @@
 from datetime import date, datetime
-from sqlalchemy import String, Date, DateTime, Integer, Text, Enum as SAEnum, ForeignKey, UniqueConstraint
+from decimal import Decimal
+from sqlalchemy import String, Date, DateTime, Integer, Boolean, Numeric, Text, JSON, Enum as SAEnum, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from typing import Optional
 from app.core.db import Base
 from app.core.private_files import generate_private_file_token
 from app.models.base import TimestampMixin
-from app.models.enums import StudentStatus, DayOfWeek, GroupStatus
+from app.models.enums import StudentStatus, DayOfWeek, GroupStatus, PaymentStatus, PaymentSource, PaymentSettlementType
 
 
 class Student(Base, TimestampMixin):
@@ -21,9 +23,12 @@ class Student(Base, TimestampMixin):
     pnfl: Mapped[str] = mapped_column(String(14), unique=True, index=True, nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
-    photo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    photo_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     extra_file_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     passport_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    passport_serial: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    buyruq_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    is_resident: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
     face_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     status: Mapped[StudentStatus] = mapped_column(
         SAEnum(StudentStatus, native_enum=False, length=20), default=StudentStatus.ACTIVE, nullable=False
@@ -39,6 +44,12 @@ class Student(Base, TimestampMixin):
     gate_logs: Mapped[list["GateLog"]] = relationship("GateLog", back_populates="student", cascade="all, delete-orphan")
 
     @property
+    def photo_url(self) -> str | None:
+        if not self.photo_key:
+            return None
+        return f"/students/files/{generate_private_file_token(self.photo_key)}"
+
+    @property
     def extra_file_url(self) -> str | None:
         if not self.extra_file_key:
             return None
@@ -49,6 +60,12 @@ class Student(Base, TimestampMixin):
         if not self.passport_key:
             return None
         return f"/students/files/{generate_private_file_token(self.passport_key)}"
+
+    @property
+    def buyruq_url(self) -> str | None:
+        if not self.buyruq_key:
+            return None
+        return f"/students/files/{generate_private_file_token(self.buyruq_key)}"
 
 
 class Group(Base, TimestampMixin):
@@ -193,3 +210,69 @@ class GroupPerformanceCell(Base, TimestampMixin):
     table: Mapped["GroupPerformanceTable"] = relationship("GroupPerformanceTable", back_populates="cells")
     match: Mapped["GroupPerformanceMatch"] = relationship("GroupPerformanceMatch", back_populates="cells")
     student: Mapped["Student"] = relationship("Student")
+
+
+class StudentTermination(Base, TimestampMixin):
+    __tablename__ = "student_terminations"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    terminated_at: Mapped[date] = mapped_column(Date, nullable=False)
+    terminated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    document_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    student: Mapped["Student"] = relationship("Student")
+    terminated_by: Mapped["User"] = relationship("User", foreign_keys=[terminated_by_user_id])
+
+    @property
+    def document_url(self) -> str | None:
+        if not self.document_key:
+            return None
+        return f"/students/files/{generate_private_file_token(self.document_key)}"
+
+
+class Transaction(Base, TimestampMixin):
+    __tablename__ = "transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    external_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
+    source: Mapped[PaymentSource] = mapped_column(
+        SAEnum(PaymentSource, native_enum=False, length=20), nullable=False
+    )
+    status: Mapped[PaymentStatus] = mapped_column(
+        SAEnum(PaymentStatus, native_enum=False, length=20), nullable=False
+    )
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payment_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payment_months: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    settlement_type: Mapped[PaymentSettlementType | None] = mapped_column(
+        SAEnum(PaymentSettlementType, native_enum=False, length=30), nullable=True
+    )
+    settlement_document_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
+    student_id: Mapped[int | None] = mapped_column(ForeignKey("students.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    student: Mapped["Student"] = relationship("Student")
+    created_by: Mapped["User"] = relationship("User", foreign_keys=[created_by_user_id])
+
+
+class GroupGame(Base, TimestampMixin):
+    __tablename__ = "group_games"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), nullable=False, index=True)
+    game_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    game_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    start_time: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    end_time: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    stadium: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    group: Mapped["Group"] = relationship("Group")
+    created_by: Mapped["User"] = relationship("User", foreign_keys=[created_by_user_id])
+    documents: Mapped[list["GameDocument"]] = relationship("GameDocument", back_populates="game", cascade="all, delete-orphan")

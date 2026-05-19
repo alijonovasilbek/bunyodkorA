@@ -26,6 +26,9 @@ PERM_PRESIDENT_DOCUMENTS_CREATE = "president_documents:create"
 PERM_PRESIDENT_DOCUMENTS_EDIT = "president_documents:edit"
 PERM_PRESIDENT_DOCUMENTS_DELETE = "president_documents:delete"
 
+PERM_COACH_DOCUMENTS_UPLOAD = "coach_documents:upload"
+PERM_COACH_DOCUMENTS_VIEW = "coach_documents:view"
+
 ALL_PERMISSIONS = [
     {"code": PERM_STUDENTS_VIEW, "description": "View students"},
     {"code": PERM_STUDENTS_EDIT, "description": "Edit students"},
@@ -46,6 +49,8 @@ ALL_PERMISSIONS = [
     {"code": PERM_PRESIDENT_DOCUMENTS_CREATE, "description": "Create president documents"},
     {"code": PERM_PRESIDENT_DOCUMENTS_EDIT, "description": "Edit president documents"},
     {"code": PERM_PRESIDENT_DOCUMENTS_DELETE, "description": "Delete president documents"},
+    {"code": PERM_COACH_DOCUMENTS_UPLOAD, "description": "Upload monthly plan and report"},
+    {"code": PERM_COACH_DOCUMENTS_VIEW, "description": "View all coaches monthly plans and reports"},
 ]
 
 DEFAULT_ROLES = {
@@ -64,6 +69,7 @@ DEFAULT_ROLES = {
             PERM_GATE_LOGS_VIEW,
             PERM_SETTINGS_SYSTEM_VIEW,
             PERM_PRESIDENT_DOCUMENTS_VIEW,
+            PERM_COACH_DOCUMENTS_VIEW,
         ],
     },
     "Accountant": {
@@ -85,6 +91,8 @@ DEFAULT_ROLES = {
             PERM_SESSIONS_CREATE,
             PERM_SESSIONS_MANAGE,
             PERM_REPORTS_ATTENDANCE_VIEW,
+            PERM_COACH_DOCUMENTS_UPLOAD,
+            PERM_COACH_DOCUMENTS_VIEW,
         ],
     },
     "Coach": {
@@ -94,6 +102,7 @@ DEFAULT_ROLES = {
             PERM_GROUPS_VIEW,
             PERM_ATTENDANCE_COACH_MARK,
             PERM_ATTENDANCE_VIEW,
+            PERM_COACH_DOCUMENTS_UPLOAD,
         ],
     },
     "Admin": {
@@ -110,6 +119,7 @@ DEFAULT_ROLES = {
             PERM_PRESIDENT_DOCUMENTS_CREATE,
             PERM_PRESIDENT_DOCUMENTS_EDIT,
             PERM_PRESIDENT_DOCUMENTS_DELETE,
+            PERM_COACH_DOCUMENTS_VIEW,
         ],
     },
 }

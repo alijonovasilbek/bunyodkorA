@@ -485,7 +485,7 @@ async def get_group_students(
         select(Student)
         .where(
             Student.group_id == group_id,
-            Student.status == StudentStatus.ACTIVE,
+            Student.status.notin_([StudentStatus.DELETED, StudentStatus.TERMINATED]),
         )
         .order_by(Student.last_name.asc(), Student.first_name.asc())
     )

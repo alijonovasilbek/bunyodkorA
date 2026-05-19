@@ -6,7 +6,7 @@ from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
 from app.core.db import get_db
 from app.core.permissions import PERM_SESSIONS_CREATE, PERM_SESSIONS_MANAGE
-from app.models.domain import Group, GroupStatus
+from app.models.domain import Group, GroupStatus, GroupGame
 from app.models.attendance import Session, Attendance
 from app.schemas.group import GroupRead
 from app.schemas.attendance import (
@@ -15,6 +15,7 @@ from app.schemas.attendance import (
     SessionWithAttendances,
     BulkSessionCreate,
 )
+from app.schemas.game import GameCreate, GameUpdate, GameRead
 from app.schemas.common import DataResponse
 from app.deps import require_permission, CurrentUser
 
@@ -292,3 +293,129 @@ async def delete_training_session(
         "session_id": session_id,
         "deleted_attendances": len(session.attendances)
     })
+
+
+# ─── Group Games ──────────────────────────────────────────────────────────────
+
+@router.post(
+    "/games",
+    response_model=DataResponse[GameRead],
+    dependencies=[Depends(require_permission(PERM_SESSIONS_CREATE))],
+)
+async def create_game(
+    data: GameCreate,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    group_result = await db.execute(
+        select(Group).where(Group.id == data.group_id, Group.status != GroupStatus.DELETED)
+    )
+    if not group_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Group not found or has been deleted")
+
+    game = GroupGame(
+        group_id=data.group_id,
+        game_date=data.game_date,
+        game_name=data.game_name,
+        start_time=data.start_time,
+        end_time=data.end_time,
+        stadium=data.stadium,
+        description=data.description,
+        created_by_user_id=user.id,
+    )
+    db.add(game)
+    await db.commit()
+    await db.refresh(game)
+    return DataResponse(data=GameRead.model_validate(game))
+
+
+@router.get(
+    "/games",
+    response_model=DataResponse[list[GameRead]],
+    dependencies=[Depends(require_permission(PERM_SESSIONS_MANAGE))],
+)
+async def get_all_games(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    group_id: Optional[int] = Query(None),
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+):
+    query = (
+        select(GroupGame)
+        .join(Group)
+        .where(Group.status != GroupStatus.DELETED)
+        .order_by(GroupGame.game_date.desc())
+    )
+    if group_id:
+        query = query.where(GroupGame.group_id == group_id)
+    if from_date:
+        query = query.where(GroupGame.game_date >= from_date)
+    if to_date:
+        query = query.where(GroupGame.game_date <= to_date)
+
+    games = (await db.execute(query)).scalars().all()
+    return DataResponse(data=[GameRead.model_validate(g) for g in games])
+
+
+@router.get(
+    "/games/{game_id}",
+    response_model=DataResponse[GameRead],
+    dependencies=[Depends(require_permission(PERM_SESSIONS_MANAGE))],
+)
+async def get_game(
+    game_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(
+        select(GroupGame).join(Group).where(GroupGame.id == game_id, Group.status != GroupStatus.DELETED)
+    )
+    game = result.scalar_one_or_none()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    return DataResponse(data=GameRead.model_validate(game))
+
+
+@router.put(
+    "/games/{game_id}",
+    response_model=DataResponse[GameRead],
+    dependencies=[Depends(require_permission(PERM_SESSIONS_MANAGE))],
+)
+async def update_game(
+    game_id: int,
+    data: GameUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(
+        select(GroupGame).join(Group).where(GroupGame.id == game_id, Group.status != GroupStatus.DELETED)
+    )
+    game = result.scalar_one_or_none()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(game, field, value)
+
+    await db.commit()
+    await db.refresh(game)
+    return DataResponse(data=GameRead.model_validate(game))
+
+
+@router.delete(
+    "/games/{game_id}",
+    response_model=DataResponse[dict],
+    dependencies=[Depends(require_permission(PERM_SESSIONS_MANAGE))],
+)
+async def delete_game(
+    game_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(
+        select(GroupGame).join(Group).where(GroupGame.id == game_id, Group.status != GroupStatus.DELETED)
+    )
+    game = result.scalar_one_or_none()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    await db.delete(game)
+    await db.commit()
+    return DataResponse(data={"message": "Game deleted successfully", "game_id": game_id})

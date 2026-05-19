@@ -13,10 +13,13 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from app.core.db import get_db
 from app.core.permissions import PERM_STUDENTS_VIEW, PERM_STUDENTS_EDIT, PERM_ATTENDANCE_VIEW
 from app.core.private_files import verify_private_file_token
-from app.models.domain import Student
+from app.models.domain import Student, StudentTermination, Transaction
 from app.models.attendance import Attendance, GateLog, Session
-from app.models.enums import StudentStatus
-from app.schemas.student import StudentRead, StudentCreate, StudentUpdate, StudentFullInfo
+from app.models.enums import StudentStatus, PaymentStatus
+from app.schemas.student import (
+    StudentRead, StudentCreate, StudentUpdate, StudentFullInfo,
+    TerminationCreate, TerminationRead, DebtMonthInfo, TransactionRead,
+)
 from app.schemas.attendance import AttendanceRead, GateLogRead
 from app.schemas.common import DataResponse, PaginationMeta
 from app.deps import require_permission, CurrentUser
@@ -47,8 +50,10 @@ def build_student_create_form(
     ampula: str | None = Form(None, description="Student ampula/position"),
     millati: str | None = Form(None, description="Student nationality"),
     pnfl: str = Form(..., min_length=14, max_length=14, description="14-digit PNFL"),
+    passport_serial: str | None = Form(None, description="Passport serial number"),
     phone: str | None = Form(None, description="Phone number"),
     address: str | None = Form(None, description="Address"),
+    is_resident: bool = Form(False, description="Does student live at the academy?"),
     group_id: int | None = Form(None, description="Group ID"),
 ) -> StudentCreate:
     payload = {
@@ -58,11 +63,13 @@ def build_student_create_form(
         "height": height,
         "weight": weight,
         "pnfl": pnfl,
+        "is_resident": is_resident,
         "status": StudentStatus.ACTIVE,
     }
     optional_fields = {
         "ampula": ampula,
         "millati": millati,
+        "passport_serial": passport_serial,
         "phone": phone,
         "address": address,
         "group_id": group_id,
@@ -80,8 +87,10 @@ def build_student_update_form(
     ampula: str | None = Form(None, description="Student ampula/position"),
     millati: str | None = Form(None, description="Student nationality"),
     pnfl: str | None = Form(None, min_length=14, max_length=14, description="14-digit PNFL"),
+    passport_serial: str | None = Form(None, description="Passport serial number"),
     phone: str | None = Form(None, description="Phone number"),
     address: str | None = Form(None, description="Address"),
+    is_resident: bool | None = Form(None, description="Does student live at the academy?"),
     status: StudentStatus | None = Form(None, description="Student status"),
     group_id: int | None = Form(None, description="Group ID"),
 ) -> StudentUpdate:
@@ -94,8 +103,10 @@ def build_student_update_form(
         "ampula": ampula,
         "millati": millati,
         "pnfl": pnfl,
+        "passport_serial": passport_serial,
         "phone": phone,
         "address": address,
+        "is_resident": is_resident,
         "status": status,
         "group_id": group_id,
     }
@@ -192,7 +203,7 @@ async def get_students(
     if status:
         query = query.where(Student.status == status)
     elif include_archived:
-        query = query.where(Student.status != StudentStatus.DELETED)
+        query = query.where(Student.status.notin_([StudentStatus.DELETED, StudentStatus.TERMINATED]))
     else:
         query = query.where(Student.status == StudentStatus.ACTIVE)
 
@@ -216,7 +227,7 @@ async def get_students(
     if status:
         count_query = count_query.where(Student.status == status)
     elif include_archived:
-        count_query = count_query.where(Student.status != StudentStatus.DELETED)
+        count_query = count_query.where(Student.status.notin_([StudentStatus.DELETED, StudentStatus.TERMINATED]))
     else:
         count_query = count_query.where(Student.status == StudentStatus.ACTIVE)
     if search:
@@ -405,14 +416,17 @@ async def create_student(
     db: Annotated[AsyncSession, Depends(get_db)],
     student_payload: Annotated[StudentCreate, Depends(build_student_create_form)],
     photo: UploadFile | None = File(None, description="Optional student profile image"),
-    passport: UploadFile | None = File(None, description="Optional student passport file"),
+    passport: UploadFile | None = File(None, description="Optional student passport file (pdf/png/jpg/docx)"),
+    buyruq: UploadFile | None = File(None, description="Optional student buyruq file (pdf/png/jpg/docx)"),
     extra_file: UploadFile | None = File(None, description="Optional extra student file"),
 ):
     try:
         if photo is not None:
-            student_payload.photo_url = await upload_image_to_s3(photo, folder="student-profil-images")
+            student_payload.photo_key = await upload_image_to_s3(photo, folder="student-profil-images")
         if passport is not None:
             student_payload.passport_key = await upload_private_file_to_s3(passport, folder="student-passports")
+        if buyruq is not None:
+            student_payload.buyruq_key = await upload_private_file_to_s3(buyruq, folder="student-buyruq-files")
         if extra_file is not None:
             student_payload.extra_file_key = await upload_private_file_to_s3(extra_file, folder="student-extra-files")
     except Exception as exc:
@@ -453,6 +467,45 @@ async def create_student(
     await db.commit()
     await db.refresh(student)
     return DataResponse(data=serialize_student(student))
+
+
+@router.get(
+    "/terminated",
+    response_model=DataResponse[list[StudentRead]],
+    dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))],
+)
+async def get_terminated_students_early(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    group_id: Optional[int] = None,
+    archive_year: int | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+):
+    from datetime import datetime as _dt
+    current_year = _dt.now().year
+    year_filter = Student.archive_year == (archive_year or current_year)
+
+    query = (
+        select(Student)
+        .where(year_filter, Student.status == StudentStatus.TERMINATED)
+        .order_by(Student.last_name.asc(), Student.first_name.asc())
+    )
+    if group_id:
+        query = query.where(Student.group_id == group_id)
+
+    count_query = select(func.count(Student.id)).where(year_filter, Student.status == StudentStatus.TERMINATED)
+    if group_id:
+        count_query = count_query.where(Student.group_id == group_id)
+
+    total = (await db.execute(count_query)).scalar() or 0
+    students = (await db.execute(query.offset((page - 1) * page_size).limit(page_size))).scalars().all()
+
+    return DataResponse(
+        data=[serialize_student(s) for s in students],
+        meta=PaginationMeta(page=page, page_size=page_size, total=total,
+                            total_pages=(total + page_size - 1) // page_size),
+    )
+
 
 @router.get("/{student_id}", response_model=DataResponse[StudentRead], dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))])
 async def get_student(
@@ -529,7 +582,8 @@ async def update_student(
     db: Annotated[AsyncSession, Depends(get_db)],
     student_update: Annotated[StudentUpdate, Depends(build_student_update_form)],
     photo: UploadFile | None = File(None, description="Optional student profile image"),
-    passport: UploadFile | None = File(None, description="Optional student passport file"),
+    passport: UploadFile | None = File(None, description="Optional student passport file (pdf/png/jpg/docx)"),
+    buyruq: UploadFile | None = File(None, description="Optional student buyruq file (pdf/png/jpg/docx)"),
     extra_file: UploadFile | None = File(None, description="Optional extra student file"),
 ):
     result = await db.execute(select(Student).where(Student.id == student_id))
@@ -542,9 +596,11 @@ async def update_student(
 
     try:
         if photo is not None:
-            update_data["photo_url"] = await upload_image_to_s3(photo, folder="student-profil-images")
+            update_data["photo_key"] = await upload_image_to_s3(photo, folder="student-profil-images")
         if passport is not None:
             update_data["passport_key"] = await upload_private_file_to_s3(passport, folder="student-passports")
+        if buyruq is not None:
+            update_data["buyruq_key"] = await upload_private_file_to_s3(buyruq, folder="student-buyruq-files")
         if extra_file is not None:
             update_data["extra_file_key"] = await upload_private_file_to_s3(extra_file, folder="student-extra-files")
     except Exception as exc:
@@ -627,7 +683,7 @@ async def upload_student_photo(
         raise HTTPException(status_code=404, detail="Student not found")
 
     try:
-        student.photo_url = await upload_image_to_s3(photo, folder="student-profil-images")
+        student.photo_key = await upload_image_to_s3(photo, folder="student-profil-images")
     except Exception as exc:
         raise_student_file_upload_error(exc)
     await db.commit()
@@ -648,6 +704,26 @@ async def upload_student_passport(
 
     try:
         student.passport_key = await upload_private_file_to_s3(passport, folder="student-passports")
+    except Exception as exc:
+        raise_student_file_upload_error(exc)
+    await db.commit()
+    await db.refresh(student)
+    return DataResponse(data=serialize_student(student))
+
+
+@router.post("/{student_id}/buyruq", response_model=DataResponse[StudentRead], dependencies=[Depends(require_permission(PERM_STUDENTS_EDIT))])
+async def upload_student_buyruq(
+    student_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    buyruq: UploadFile = File(..., description="Student buyruq file (pdf/png/jpg/docx)"),
+):
+    result = await db.execute(select(Student).where(Student.id == student_id))
+    student = result.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    try:
+        student.buyruq_key = await upload_private_file_to_s3(buyruq, folder="student-buyruq-files")
     except Exception as exc:
         raise_student_file_upload_error(exc)
     await db.commit()
@@ -915,4 +991,205 @@ async def bulk_delete_students(
         "total_requested": len(student_ids),
         "errors": errors if errors else None
     })
+
+
+# ─── Terminated students ──────────────────────────────────────────────────────
+
+@router.post(
+    "/{student_id}/terminate",
+    response_model=DataResponse[TerminationRead],
+    dependencies=[Depends(require_permission(PERM_STUDENTS_EDIT))],
+)
+async def terminate_student(
+    student_id: int,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    terminated_at: date = Form(..., description="Terminate qilingan sana"),
+    reason: str | None = Form(None, description="Sababi"),
+    document: UploadFile | None = File(None, description="Hujjat (pdf/png/jpg/docx)"),
+):
+    result = await db.execute(select(Student).where(Student.id == student_id))
+    student = result.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    if student.status == StudentStatus.TERMINATED:
+        raise HTTPException(status_code=400, detail="Student already terminated")
+    if student.status == StudentStatus.DELETED:
+        raise HTTPException(status_code=400, detail="Student is deleted")
+
+    document_key = None
+    if document is not None:
+        try:
+            document_key = await upload_private_file_to_s3(document, folder="student-termination-docs")
+        except Exception as exc:
+            raise_student_file_upload_error(exc)
+
+    student.status = StudentStatus.TERMINATED
+
+    existing = await db.execute(
+        select(StudentTermination).where(StudentTermination.student_id == student_id)
+    )
+    termination = existing.scalar_one_or_none()
+    if termination:
+        termination.terminated_at = terminated_at
+        termination.terminated_by_user_id = user.id
+        termination.reason = reason
+        if document_key:
+            termination.document_key = document_key
+    else:
+        termination = StudentTermination(
+            student_id=student_id,
+            terminated_at=terminated_at,
+            terminated_by_user_id=user.id,
+            reason=reason,
+            document_key=document_key,
+        )
+        db.add(termination)
+
+    await db.commit()
+    await db.refresh(termination)
+
+    return DataResponse(data=TerminationRead(
+        id=termination.id,
+        student_id=termination.student_id,
+        terminated_at=termination.terminated_at,
+        terminated_by_user_id=termination.terminated_by_user_id,
+        terminated_by_name=user.full_name,
+        reason=termination.reason,
+        document_url=termination.document_url,
+        created_at=termination.created_at,
+    ))
+
+
+@router.get(
+    "/{student_id}/termination-info",
+    response_model=DataResponse[TerminationRead],
+    dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))],
+)
+async def get_termination_info(
+    student_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from sqlalchemy.orm import selectinload
+    result = await db.execute(
+        select(StudentTermination)
+        .options(selectinload(StudentTermination.terminated_by))
+        .where(StudentTermination.student_id == student_id)
+    )
+    termination = result.scalar_one_or_none()
+    if not termination:
+        raise HTTPException(status_code=404, detail="Termination record not found")
+
+    return DataResponse(data=TerminationRead(
+        id=termination.id,
+        student_id=termination.student_id,
+        terminated_at=termination.terminated_at,
+        terminated_by_user_id=termination.terminated_by_user_id,
+        terminated_by_name=termination.terminated_by.full_name if termination.terminated_by else None,
+        reason=termination.reason,
+        document_url=termination.document_url,
+        created_at=termination.created_at,
+    ))
+
+
+@router.get(
+    "/{student_id}/debt-months",
+    response_model=DataResponse[list[DebtMonthInfo]],
+    dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))],
+)
+async def get_student_debt_months(
+    student_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Terminated student uchun qarz bo'lgan oylarni qaytaradi.
+    Hisob terminate sanasigacha (terminated_at) hisoblanadi.
+    """
+    student_result = await db.execute(select(Student).where(Student.id == student_id))
+    student = student_result.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    term_result = await db.execute(
+        select(StudentTermination).where(StudentTermination.student_id == student_id)
+    )
+    termination = term_result.scalar_one_or_none()
+    if not termination:
+        raise HTTPException(status_code=404, detail="Student has no termination record")
+
+    # Enrollment date (created_at) dan terminated_at gacha bo'lgan barcha oylar
+    start_year = student.created_at.year
+    start_month = student.created_at.month
+    end_year = termination.terminated_at.year
+    end_month = termination.terminated_at.month
+
+    # Muvaffaqiyatli to'lovlarni olish (terminate sanasigacha)
+    txns_result = await db.execute(
+        select(Transaction).where(
+            Transaction.student_id == student_id,
+            Transaction.status == PaymentStatus.SUCCESS,
+            Transaction.payment_year.isnot(None),
+            Transaction.payment_months.isnot(None),
+        )
+    )
+    transactions = txns_result.scalars().all()
+
+    # Qaysi (year, month) lar to'langan
+    paid_months: dict[tuple[int, int], Decimal] = {}
+    for txn in transactions:
+        if txn.payment_year and txn.payment_months:
+            for m in txn.payment_months:
+                key = (txn.payment_year, int(m))
+                paid_months[key] = paid_months.get(key, Decimal(0)) + txn.amount
+
+    # Barcha oylarni iterate qilib tekshirish
+    debt_list = []
+    y, mo = start_year, start_month
+    while (y, mo) <= (end_year, end_month):
+        key = (y, mo)
+        is_paid = key in paid_months
+        debt_list.append(DebtMonthInfo(
+            year=y,
+            month=mo,
+            is_paid=is_paid,
+            paid_amount=paid_months.get(key),
+        ))
+        mo += 1
+        if mo > 12:
+            mo = 1
+            y += 1
+
+    return DataResponse(data=debt_list)
+
+
+@router.get(
+    "/{student_id}/transactions",
+    response_model=DataResponse[list[TransactionRead]],
+    dependencies=[Depends(require_permission(PERM_STUDENTS_VIEW))],
+)
+async def get_student_transactions(
+    student_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+):
+    student_result = await db.execute(select(Student).where(Student.id == student_id))
+    if not student_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    query = (
+        select(Transaction)
+        .where(Transaction.student_id == student_id)
+        .order_by(Transaction.created_at.desc())
+    )
+    count_query = select(func.count(Transaction.id)).where(Transaction.student_id == student_id)
+
+    total = (await db.execute(count_query)).scalar() or 0
+    txns = (await db.execute(query.offset((page - 1) * page_size).limit(page_size))).scalars().all()
+
+    return DataResponse(
+        data=[TransactionRead.model_validate(t) for t in txns],
+        meta=PaginationMeta(page=page, page_size=page_size, total=total,
+                            total_pages=(total + page_size - 1) // page_size),
+    )
 

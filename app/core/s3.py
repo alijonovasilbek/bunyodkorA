@@ -182,7 +182,7 @@ async def upload_image_to_s3(file: UploadFile, folder: str = "uploads") -> str:
             }
         )
 
-        return f"https://{AWS_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{key}"
+        return key
 
     except ValueError as ve:
         # Re-raise validation errors with clear message

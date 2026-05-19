@@ -1,6 +1,16 @@
 from app.models.auth import User, Role, Permission
-from app.models.domain import Student, Parent, Group, Contract
-from app.models.attendance import Session, Attendance, GateLog
+from app.models.domain import (
+    Student,
+    Group,
+    PresidentDocument,
+    GroupPerformanceTable,
+    GroupPerformanceMatch,
+    GroupPerformanceCell,
+    StudentTermination,
+    Transaction,
+    GroupGame,
+)
+from app.models.attendance import Session, Attendance, GateLog, CoachMonthlyDocument, GameDocument
 from app.models.settings import SystemSettings
 
 __all__ = [
@@ -8,11 +18,18 @@ __all__ = [
     "Role",
     "Permission",
     "Student",
-    "Parent",
     "Group",
-    "Contract",
+    "PresidentDocument",
+    "GroupPerformanceTable",
+    "GroupPerformanceMatch",
+    "GroupPerformanceCell",
+    "StudentTermination",
+    "Transaction",
     "Session",
     "Attendance",
     "GateLog",
+    "CoachMonthlyDocument",
+    "GroupGame",
+    "GameDocument",
     "SystemSettings",
 ]

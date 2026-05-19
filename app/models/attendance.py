@@ -1,9 +1,10 @@
 from datetime import datetime, date
-from sqlalchemy import String, DateTime, Date, Time, Boolean, Text, Enum as SAEnum, ForeignKey
+from sqlalchemy import String, DateTime, Date, Time, Boolean, Text, Integer, Enum as SAEnum, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.db import Base
 from app.models.base import TimestampMixin
-from app.models.enums import AttendanceStatus
+from app.models.enums import AttendanceStatus, CoachDocType
+from app.core.private_files import generate_private_file_token
 
 
 class Session(Base, TimestampMixin):
@@ -61,3 +62,45 @@ class GateLog(Base, TimestampMixin):
     )
 
     student: Mapped["Student"] = relationship("Student", back_populates="gate_logs")
+
+
+class CoachMonthlyDocument(Base, TimestampMixin):
+    __tablename__ = "coach_monthly_documents"
+    __table_args__ = (
+        UniqueConstraint("coach_id", "group_id", "year", "month", "doc_type", name="uq_coach_monthly_doc"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    coach_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), nullable=False, index=True)
+    year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    month: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    doc_type: Mapped[CoachDocType] = mapped_column(
+        SAEnum(CoachDocType, native_enum=False, length=20), nullable=False
+    )
+    file_key: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    coach: Mapped["User"] = relationship("User", foreign_keys=[coach_id])
+    group: Mapped["Group"] = relationship("Group")
+
+
+class GameDocument(Base, TimestampMixin):
+    __tablename__ = "game_documents"
+    __table_args__ = (
+        UniqueConstraint("game_id", "coach_id", "doc_type", name="uq_game_document"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    game_id: Mapped[int] = mapped_column(ForeignKey("group_games.id", ondelete="CASCADE"), nullable=False, index=True)
+    coach_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    doc_type: Mapped[CoachDocType] = mapped_column(
+        SAEnum(CoachDocType, native_enum=False, length=20), nullable=False
+    )
+    file_key: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    game: Mapped["GroupGame"] = relationship("GroupGame", back_populates="documents")
+    coach: Mapped["User"] = relationship("User", foreign_keys=[coach_id])
+
+    @property
+    def file_url(self) -> str:
+        return f"/coach-documents/games/{self.id}/file"

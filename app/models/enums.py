@@ -13,6 +13,7 @@ class StudentStatus(str, Enum):
     INACTIVE = "inactive"
     DELETED = "deleted"
     ARCHIVED = "archived"
+    TERMINATED = "terminated"
 
 
 class GroupStatus(str, Enum):
@@ -57,3 +58,8 @@ class DayOfWeek(str, Enum):
     FRIDAY = "friday"
     SATURDAY = "saturday"
     SUNDAY = "sunday"
+
+
+class CoachDocType(str, Enum):
+    PLAN = "plan"
+    REPORT = "report"
